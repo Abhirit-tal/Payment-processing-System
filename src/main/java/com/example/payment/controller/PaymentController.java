@@ -11,18 +11,22 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
 import java.util.Map;
 
 import jakarta.validation.Valid;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @RestController
 @RequestMapping("/payments")
 public class PaymentController {
 
     private final PaymentService paymentService;
+    private static final Logger log = LoggerFactory.getLogger(PaymentController.class);
 
     public PaymentController(PaymentService paymentService) {
         this.paymentService = paymentService;
@@ -43,17 +47,28 @@ public class PaymentController {
             @ApiResponse(responseCode = "400", description = "Validation error")
     })
     public ResponseEntity<?> purchase(@Valid @RequestBody PaymentRequests.PurchaseRequest req) {
+        log.debug("Purchase endpoint called, authentication={}", SecurityContextHolder.getContext().getAuthentication());
         Map<String, String> card = new HashMap<>();
         card.put("number", req.getCard().getNumber());
         card.put("expMonth", String.valueOf(req.getCard().getExpMonth()));
         card.put("expYear", String.valueOf(req.getCard().getExpYear()));
         card.put("cvv", req.getCard().getCvv());
         Transaction tx = paymentService.purchase(req.getAmount(), req.getCurrency(), card, req.getOrderId());
-        return ResponseEntity.status(201).body(Map.of(
-                "order_id", tx.getOrder().getId(),
-                "transaction_id", tx.getProviderTxId(),
-                "status", tx.getStatus()
-        ));
+        // Defensive: Map.of throws NPE if any value is null. Handle provider/persistence errors gracefully.
+        if (tx == null) {
+            log.warn("Purchase failed: paymentService returned null transaction for orderId={}", req.getOrderId());
+            return ResponseEntity.status(502).body(Map.of("detail", "payment provider error"));
+        }
+        if (tx.getOrder() == null) {
+            log.warn("Purchase failed: transaction has no associated order (tx={})", tx);
+            return ResponseEntity.status(502).body(Map.of("detail", "internal persistence error"));
+        }
+        // Build response safely
+        Map<String, Object> resp = new HashMap<>();
+        resp.put("order_id", tx.getOrder().getId());
+        resp.put("transaction_id", tx.getProviderTxId());
+        resp.put("status", tx.getStatus());
+        return ResponseEntity.status(201).body(resp);
     }
 
     @PostMapping("/authorize")

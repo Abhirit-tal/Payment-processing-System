@@ -9,12 +9,14 @@ services:
       - SPRING_PROFILES_ACTIVE=default
       - AUTHNET_API_LOGIN_ID=
       - AUTHNET_TRANSACTION_KEY=
-      - JWT_SECRET=change-me-please
+      # Use a stable secret for JWT so tokens remain valid across restarts (replace in prod)
+      - JWT_SECRET=super-secret-key-please-change-0123456789abcdef
       - DEVELOPER_KEY=dev-local-key
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8080/payments/health || exit 1"]
+      # use 127.0.0.1 to avoid any DNS/host resolution quirks inside container
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8080/payments/health || exit 1"]
       interval: 10s
       timeout: 5s
+      start_period: 10s
       retries: 6
     restart: unless-stopped
-
