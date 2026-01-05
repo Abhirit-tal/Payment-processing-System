@@ -1,0 +1,361 @@
+openapi: 3.0.3
+info:
+  title: Payment Processing System API
+  description: API for payment flows (Authorize.Net sandbox integration). Contains endpoints for Purchase, Authorize, Capture, Cancel (void) and Refund. JWT bearer is used to protect endpoints.
+  version: 1.0.0
+servers:
+  - url: http://localhost:8080
+security:
+  - bearerAuth: []
+
+paths:
+  /auth/token:
+    post:
+      summary: Exchange developer_key for a short-lived JWT (development only)
+      tags:
+        - auth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - developer_key
+              properties:
+                developer_key:
+                  type: string
+                  example: dev-local-key
+      responses:
+        '200':
+          description: Token issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                  token_type:
+                    type: string
+                    example: bearer
+                  expires_in:
+                    type: integer
+                    example: 3600
+        '401':
+          description: Invalid developer key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /payments/health:
+    get:
+      summary: Health check
+      tags:
+        - payments
+      responses:
+        '200':
+          description: Service health
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  /payments/purchase:
+    post:
+      summary: Purchase (authorize + capture)
+      tags:
+        - payments
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PurchaseRequest'
+      responses:
+        '201':
+          description: Purchase created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PurchaseResponse'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
+
+  /payments/authorize:
+    post:
+      summary: Authorize only (two-step)
+      tags:
+        - payments
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PurchaseRequest'
+      responses:
+        '201':
+          description: Authorization created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PurchaseResponse'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
+
+  /payments/capture:
+    post:
+      summary: Capture a previously authorized transaction
+      tags:
+        - payments
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CaptureRequest'
+      responses:
+        '200':
+          description: Capture result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaptureResponse'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
+        '404':
+          description: Transaction not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /payments/cancel:
+    post:
+      summary: Void (cancel) a previously authorized transaction
+      tags:
+        - payments
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CancelRequest'
+      responses:
+        '200':
+          description: Void result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaptureResponse'
+        '404':
+          description: Transaction not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /payments/refund:
+    post:
+      summary: Refund (full or partial) a captured transaction
+      tags:
+        - payments
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefundRequest'
+      responses:
+        '200':
+          description: Refund result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefundResponse'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
+        '404':
+          description: Original transaction not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Card:
+      type: object
+      properties:
+        number:
+          type: string
+          description: Card PAN
+          example: "4111111111111111"
+        expMonth:
+          type: integer
+          example: 12
+        expYear:
+          type: integer
+          example: 2030
+        cvv:
+          type: string
+          example: "123"
+      required:
+        - number
+        - expMonth
+        - expYear
+        - cvv
+
+    PurchaseRequest:
+      type: object
+      properties:
+        amount:
+          type: number
+          format: decimal
+          example: 12.34
+        currency:
+          type: string
+          example: USD
+        card:
+          $ref: '#/components/schemas/Card'
+        orderId:
+          type: string
+          example: ext-100
+      required:
+        - amount
+        - card
+
+    PurchaseResponse:
+      type: object
+      properties:
+        order_id:
+          type: integer
+          example: 100
+        transaction_id:
+          type: string
+          example: prov-123
+        status:
+          type: string
+          example: success
+
+    CaptureRequest:
+      type: object
+      properties:
+        transactionId:
+          type: string
+          example: prov-auth-123
+        amount:
+          type: number
+          format: decimal
+          example: 10.00
+      required:
+        - transactionId
+
+    CaptureResponse:
+      type: object
+      properties:
+        transaction_id:
+          type: string
+          example: prov-capture-123
+        status:
+          type: string
+          example: success
+
+    CancelRequest:
+      type: object
+      properties:
+        transactionId:
+          type: string
+          example: prov-auth-123
+      required:
+        - transactionId
+
+    RefundRequest:
+      type: object
+      properties:
+        transactionId:
+          type: string
+          example: prov-captured-123
+        amount:
+          type: number
+          format: decimal
+          example: 5.00
+        last4:
+          type: string
+          description: Last 4 digits of the card (required by Authorize.Net refunds)
+          example: "1111"
+      required:
+        - transactionId
+        - last4
+
+    RefundResponse:
+      type: object
+      properties:
+        refund_transaction_id:
+          type: string
+          example: prov-refund-123
+        status:
+          type: string
+          example: success
+
+    ErrorResponse:
+      type: object
+      properties:
+        detail:
+          type: string
+          example: "transaction not found"
+
+    ValidationErrorResponse:
+      type: object
+      properties:
+        errors:
+          type: object
+          additionalProperties:
+            type: string
+          example:
+            amount: "must be >= 0.01"
+            card.number: "invalid card number"
+
+tags:
+  - name: payments
+    description: Payment endpoints (purchase, authorize, capture, cancel, refund)
+  - name: auth
+    description: Authentication helpers (development only)
+
