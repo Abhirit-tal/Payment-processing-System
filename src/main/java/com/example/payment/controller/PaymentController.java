@@ -54,16 +54,18 @@ public class PaymentController {
         card.put("expYear", String.valueOf(req.getCard().getExpYear()));
         card.put("cvv", req.getCard().getCvv());
         Transaction tx = paymentService.purchase(req.getAmount(), req.getCurrency(), card, req.getOrderId());
-        // Defensive: Map.of throws NPE if any value is null. Handle provider/persistence errors gracefully.
         if (tx == null) {
             log.warn("Purchase failed: paymentService returned null transaction for orderId={}", req.getOrderId());
-            return ResponseEntity.status(502).body(Map.of("detail", "payment provider error"));
+            Map<String, Object> err = new HashMap<>();
+            err.put("detail", "payment provider error");
+            return ResponseEntity.status(502).body(err);
         }
         if (tx.getOrder() == null) {
             log.warn("Purchase failed: transaction has no associated order (tx={})", tx);
-            return ResponseEntity.status(502).body(Map.of("detail", "internal persistence error"));
+            Map<String, Object> err = new HashMap<>();
+            err.put("detail", "internal persistence error");
+            return ResponseEntity.status(502).body(err);
         }
-        // Build response safely
         Map<String, Object> resp = new HashMap<>();
         resp.put("order_id", tx.getOrder().getId());
         resp.put("transaction_id", tx.getProviderTxId());
@@ -80,37 +82,58 @@ public class PaymentController {
         card.put("expYear", String.valueOf(req.getCard().getExpYear()));
         card.put("cvv", req.getCard().getCvv());
         Transaction tx = paymentService.authorizeOnly(req.getAmount(), req.getCurrency(), card, req.getOrderId());
-        return ResponseEntity.status(201).body(Map.of(
-                "order_id", tx.getOrder().getId(),
-                "transaction_id", tx.getProviderTxId(),
-                "status", tx.getStatus()
-        ));
+        Map<String, Object> resp = new HashMap<>();
+        resp.put("order_id", tx.getOrder().getId());
+        resp.put("transaction_id", tx.getProviderTxId());
+        resp.put("status", tx.getStatus());
+        return ResponseEntity.status(201).body(resp);
     }
 
     @PostMapping("/capture")
     @Operation(summary = "Capture an authorized transaction", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<?> capture(@Valid @RequestBody PaymentRequests.CaptureRequest req) {
         var opt = paymentService.capture(req.getTransactionId(), req.getAmount());
-        if (opt.isEmpty()) return ResponseEntity.status(404).body(Map.of("detail", "transaction not found"));
+        if (opt.isEmpty()) {
+            Map<String, Object> err = new HashMap<>();
+            err.put("detail", "transaction not found");
+            return ResponseEntity.status(404).body(err);
+        }
         Transaction tx = opt.get();
-        return ResponseEntity.ok(Map.of("transaction_id", tx.getProviderTxId(), "status", tx.getStatus()));
+        Map<String, Object> resp = new HashMap<>();
+        resp.put("transaction_id", tx.getProviderTxId());
+        resp.put("status", tx.getStatus());
+        return ResponseEntity.ok(resp);
     }
 
     @PostMapping("/cancel")
     @Operation(summary = "Cancel (void) an authorized transaction", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<?> cancel(@Valid @RequestBody PaymentRequests.CancelRequest req) {
         var opt = paymentService.voidTransaction(req.getTransactionId());
-        if (opt.isEmpty()) return ResponseEntity.status(404).body(Map.of("detail", "transaction not found"));
+        if (opt.isEmpty()) {
+            Map<String, Object> err = new HashMap<>();
+            err.put("detail", "transaction not found");
+            return ResponseEntity.status(404).body(err);
+        }
         Transaction tx = opt.get();
-        return ResponseEntity.ok(Map.of("transaction_id", tx.getProviderTxId(), "status", tx.getStatus()));
+        Map<String, Object> resp = new HashMap<>();
+        resp.put("transaction_id", tx.getProviderTxId());
+        resp.put("status", tx.getStatus());
+        return ResponseEntity.ok(resp);
     }
 
     @PostMapping("/refund")
     @Operation(summary = "Refund (full or partial)", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<?> refund(@Valid @RequestBody PaymentRequests.RefundRequest req) {
         var opt = paymentService.refund(req.getTransactionId(), req.getAmount(), req.getLast4());
-        if (opt.isEmpty()) return ResponseEntity.status(404).body(Map.of("detail", "original transaction not found"));
+        if (opt.isEmpty()) {
+            Map<String, Object> err = new HashMap<>();
+            err.put("detail", "original transaction not found");
+            return ResponseEntity.status(404).body(err);
+        }
         Transaction tx = opt.get();
-        return ResponseEntity.ok(Map.of("refund_transaction_id", tx.getProviderTxId(), "status", tx.getStatus()));
+        Map<String, Object> resp = new HashMap<>();
+        resp.put("refund_transaction_id", tx.getProviderTxId());
+        resp.put("status", tx.getStatus());
+        return ResponseEntity.ok(resp);
     }
 }
