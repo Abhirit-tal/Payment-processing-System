@@ -7,13 +7,15 @@ services:
       - "8080:8080"
     environment:
       - SPRING_PROFILES_ACTIVE=default
-      - AUTHNET_ENVIRONMENT=sandbox
+      - AUTHNET_ENV=sandbox
       - AUTHNET_API_LOGIN_ID=33kZwwb86J8
       - AUTHNET_TRANSACTION_KEY=6U75k44Yyk55SNRr
       # Use a stable secret for JWT so tokens remain valid across restarts (replace in prod)
       - JWT_SECRET=super-secret-key-please-change-0123456789abcdef
       - DEVELOPER_KEY=dev-local-key
       - JAVA_TOOL_OPTIONS=-Dserver.port=8080
+      - SPRING_H2_CONSOLE_ENABLED=true
+      - SPRING_H2_CONSOLE_PATH=/h2-console
     healthcheck:
       # use 127.0.0.1 to avoid any DNS/host resolution quirks inside container
       test: ["CMD-SHELL", "curl -f http://127.0.0.1:8080/payments/health || exit 1"]
