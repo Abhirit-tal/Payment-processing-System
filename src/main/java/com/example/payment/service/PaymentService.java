@@ -133,9 +133,9 @@ public class PaymentService {
         if ("success".equals(status)) {
             transitionOrderState(order, PaymentState.CAPTURED);
             auditService.logTransactionCreated(captureTx, AuditService.ACTION_CAPTURE);
-        } else {
-            transitionOrderState(order, PaymentState.ERROR);
         }
+        // Note: On capture failure, we keep the order in AUTHORIZED state
+        // so the user can retry with correct amount. The authorization is still valid.
 
         transactionRepository.save(captureTx);
         auditService.logGatewayResponseAsync(order.getId(), "CAPTURE", "success".equals(status), status);

@@ -53,7 +53,7 @@ com.example.payment.auth
 - `JwtTokenProvider` — Simple JWT creation and validation. Uses `jwt.secret` and `jwt.expiration-seconds` settings. If `jwt.secret` is missing or default placeholder is present, a random key is generated for development convenience (not for production).
 
 com.example.payment.config
-- `SecurityConfig` — Spring Security configuration that enforces JWT bearer authentication on protected endpoints, exposes `/auth/**`, `/payments/health` and `/h2-console/**` as public.
+- `SecurityConfig` — Spring Security configuration that enforces JWT bearer authentication on protected endpoints, exposes `/auth/**` and `/payments/health` as public.
 - `AppProperties` — Small properties binding class for `jwt.*` properties.
 - `OpenApiConfig` — (if present) OpenAPI / springdoc configuration to document endpoints and add bearer auth scheme.
 
@@ -62,13 +62,17 @@ Testing
   - `AuthorizeNetClientSmokeTest` — Verifies the `AuthorizeNetClient` fails gracefully when credentials are missing (helpful for local dev without sandbox creds).
   - Controller and service unit tests — tests that mock `PaymentService`/`AuthorizeNetClient` to validate controller behavior and service logic.
   - Integration tests (guarded) — some integration tests may be present and configured to run only when Authorize.Net sandbox credentials are provided via environment variables.
+- `src/test/resources/application.properties` — Test configuration using H2 in-memory database for fast isolated tests.
 
 Runtime configuration
 - `src/main/resources/application.properties` contains default settings used during local development:
-  - H2 in-memory datasource (used for quick local runs and tests)
+  - PostgreSQL datasource configuration (connection URL, username, password)
   - `authnet.environment` (default `sandbox`) and placeholders for `authnet.api.login.id` and `authnet.transaction.key` (set these via environment variables or override in local properties when running integration tests)
   - `jwt.secret` and `jwt.expiration-seconds`
-  - H2 console enabled for convenience
+
+Database
+- **Production/Development**: PostgreSQL (configured via `DATABASE_URL`, `DATABASE_USERNAME`, `DATABASE_PASSWORD`)
+- **Testing**: H2 in-memory database (configured in `src/test/resources/application.properties`)
 
 How the core flows map to code
 - Purchase: `POST /payments/purchase` -> `PaymentController.purchase` -> `PaymentService.purchase` -> `AuthorizeNetClient.createTransaction(..., capture=true)`
@@ -82,7 +86,8 @@ Configuration & environment notes
   - `authnet.api.login.id` — your sandbox API Login ID
   - `authnet.transaction.key` — your sandbox Transaction Key
   - Optionally `authnet.environment=production` to switch environments (not recommended for tests)
-- For local development you can use the H2 console (`/h2-console`) and the generated JWT token endpoint (`POST /auth/token`) with `developer_key` from config (property `developer.key`).
+- For local development you can use the generated JWT token endpoint (`POST /auth/token`) with `developer_key` from config (property `developer.key`).
+- Database: PostgreSQL is used for development/production. Tests use H2 in-memory database.
 
 Next steps & recommended improvements
 - Add database migrations (Flyway/Liquibase) to manage schema changes instead of relying on `spring.jpa.hibernate.ddl-auto=update`.

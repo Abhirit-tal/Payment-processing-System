@@ -1,26 +1,55 @@
 version: '3.8'
 
 services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: payment-postgres
+    environment:
+      POSTGRES_DB: payments
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d payments"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Spring Boot Application
   app:
     build: .
     ports:
       - "8080:8080"
     environment:
       - SPRING_PROFILES_ACTIVE=default
+      # PostgreSQL connection
+      - DATABASE_URL=jdbc:postgresql://postgres:5432/payments
+      - DATABASE_USERNAME=postgres
+      - DATABASE_PASSWORD=postgres
+      # Authorize.Net
       - AUTHNET_ENV=sandbox
-      - AUTHNET_API_LOGIN_ID=33kZwwb86J8
-      - AUTHNET_TRANSACTION_KEY=6U75k44Yyk55SNRr
-      # Use a stable secret for JWT so tokens remain valid across restarts (replace in prod)
+      - AUTHNET_API_LOGIN_ID=93yUVrZMb2vt
+      - AUTHNET_TRANSACTION_KEY=3F267WYmm4aL2KaU
+      # JWT (use a stable secret so tokens remain valid across restarts)
       - JWT_SECRET=super-secret-key-please-change-0123456789abcdef
       - DEVELOPER_KEY=dev-local-key
       - JAVA_TOOL_OPTIONS=-Dserver.port=8080
-      - SPRING_H2_CONSOLE_ENABLED=true
-      - SPRING_H2_CONSOLE_PATH=/h2-console
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
-      # use 127.0.0.1 to avoid any DNS/host resolution quirks inside container
       test: ["CMD-SHELL", "curl -f http://127.0.0.1:8080/payments/health || exit 1"]
       interval: 10s
       timeout: 5s
-      start_period: 10s
+      start_period: 30s
       retries: 6
     restart: unless-stopped
+
+volumes:
+  postgres_data:
+

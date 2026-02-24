@@ -13,27 +13,46 @@ A robust Spring Boot backend that integrates with Authorize.Net sandbox for paym
 
 ## Quick Start
 
-### 1. Build and run tests
+### 1. Start PostgreSQL (using Docker)
+
+```powershell
+docker-compose up -d postgres
+```
+
+Or install PostgreSQL locally and create a database:
+```sql
+CREATE DATABASE payments;
+```
+
+### 2. Build and run tests
 
 ```powershell
 mvn clean test
 ```
 
-### 2. Run the application
+### 3. Run the application
 
 ```powershell
 mvn spring-boot:run
 ```
 
-### 3. Configuration
+Or run everything with Docker:
+```powershell
+docker-compose up
+```
+
+### 4. Configuration
 
 Set environment variables or update `src/main/resources/application.properties`:
 
 | Property | Description | Default |
 |----------|-------------|---------|
+| `DATABASE_URL` | PostgreSQL JDBC URL | `jdbc:postgresql://localhost:5432/payments` |
+| `DATABASE_USERNAME` | Database username | `postgres` |
+| `DATABASE_PASSWORD` | Database password | `postgres` |
 | `authnet.api.login.id` | Authorize.Net API Login ID (sandbox) | - |
 | `authnet.transaction.key` | Authorize.Net Transaction Key (sandbox) | - |
-| `jwt.secret` | Secret for signing JWTs | `change-me-please` |
+| `jwt.secret` | Secret for signing JWTs | `my-super-secret-key-for-dev-32bytes` |
 | `developer.key` | Dev key for `/auth/token` endpoint | `dev-local-key` |
 
 ## API Endpoints

@@ -1,7 +1,6 @@
 package com.example.payment.config;
 
 import com.example.payment.auth.JwtTokenProvider;
-import org.springframework.boot.autoconfigure.security.servlet.PathRequest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -29,8 +28,9 @@ public class SecurityConfig {
             // Disable CSRF for stateless REST APIs to avoid 403 on POST/PUT
             .csrf(csrf -> csrf.disable())
             .authorizeHttpRequests(auth -> auth
-                .requestMatchers(PathRequest.toH2Console()).permitAll()
                 .requestMatchers("/auth/**", "/payments/health").permitAll()
+                // Allow Swagger UI and OpenAPI endpoints
+                .requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**", "/swagger-resources/**", "/webjars/**").permitAll()
                 .requestMatchers("/payments/**").authenticated()
                 .anyRequest().authenticated()
             )
@@ -38,9 +38,7 @@ public class SecurityConfig {
                 .authenticationEntryPoint((req, res, e) -> res.sendError(HttpServletResponse.SC_UNAUTHORIZED))
                 .accessDeniedHandler((req, res, e) -> res.sendError(HttpServletResponse.SC_FORBIDDEN))
             )
-            .addFilterBefore(jwtFilter, org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class)
-            // allow H2 console to render inside frames
-            .headers(headers -> headers.frameOptions(frame -> frame.disable()));
+            .addFilterBefore(jwtFilter, org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }

@@ -187,18 +187,24 @@ The project uses JPA entities `Order` and `Transaction`. An `Order` may have man
 - created_at TIMESTAMP NOT NULL
 - updated_at TIMESTAMP NOT NULL
 
-Example SQL (H2 / generic):
+Example SQL (PostgreSQL):
 
+```sql
 CREATE TABLE orders (
-  id BIGINT AUTO_INCREMENT PRIMARY KEY,
-  external_id VARCHAR(255),
+  id BIGSERIAL PRIMARY KEY,
+  external_id VARCHAR(255) UNIQUE,
   currency VARCHAR(10) NOT NULL DEFAULT 'USD',
   amount DECIMAL(19,4) NOT NULL,
   status VARCHAR(50) NOT NULL,
-  created_at TIMESTAMP NOT NULL,
-  updated_at TIMESTAMP NOT NULL,
-  UNIQUE (external_id)
+  state VARCHAR(50) NOT NULL DEFAULT 'created',
+  idempotency_key VARCHAR(255),
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX idx_orders_external_id ON orders(external_id);
+CREATE INDEX idx_orders_state ON orders(state);
+```
 
 5.2. transactions table (mapped from `Transaction` entity)
 - id BIGINT PRIMARY KEY (auto-increment)
@@ -212,17 +218,21 @@ CREATE TABLE orders (
 
 Example SQL:
 
+```sql
 CREATE TABLE transactions (
-  id BIGINT AUTO_INCREMENT PRIMARY KEY,
-  order_id BIGINT NOT NULL,
+  id BIGSERIAL PRIMARY KEY,
+  order_id BIGINT NOT NULL REFERENCES orders(id),
   type VARCHAR(50) NOT NULL,
   provider_tx_id VARCHAR(255),
   amount DECIMAL(19,4) NOT NULL,
   status VARCHAR(50) NOT NULL,
-  raw_response CLOB,
-  created_at TIMESTAMP NOT NULL,
-  FOREIGN KEY (order_id) REFERENCES orders(id)
+  raw_response TEXT,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX idx_transactions_order_id ON transactions(order_id);
+CREATE INDEX idx_transactions_provider_tx_id ON transactions(provider_tx_id);
+```
 
 5.3. Relationship
 - One `orders` row can have many `transactions` rows (1:N). The `transactions.order_id` column references `orders.id`.
@@ -424,7 +434,7 @@ Client              IdempotencyFilter    IdempotencyService    PaymentService
 ### 5.4. idempotency_keys table
 ```sql
 CREATE TABLE idempotency_keys (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGSERIAL PRIMARY KEY,
     idempotency_key VARCHAR(255) UNIQUE NOT NULL,
     request_hash VARCHAR(64) NOT NULL,
     request_path VARCHAR(255),
@@ -432,18 +442,19 @@ CREATE TABLE idempotency_keys (
     response_body TEXT,
     response_status INT,
     order_id BIGINT,
-    created_at TIMESTAMP NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     expires_at TIMESTAMP NOT NULL,
     locked_at TIMESTAMP,
-    completed_at TIMESTAMP,
-    INDEX idx_expires_at (expires_at)
+    completed_at TIMESTAMP
 );
+
+CREATE INDEX idx_idempotency_expires_at ON idempotency_keys(expires_at);
 ```
 
 ### 5.5. audit_logs table
 ```sql
 CREATE TABLE audit_logs (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGSERIAL PRIMARY KEY,
     entity_type VARCHAR(50) NOT NULL,
     entity_id BIGINT NOT NULL,
     action VARCHAR(50) NOT NULL,
@@ -452,10 +463,11 @@ CREATE TABLE audit_logs (
     old_value TEXT,
     new_value TEXT,
     metadata TEXT,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_entity (entity_type, entity_id),
-    INDEX idx_created_at (created_at)
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX idx_audit_entity ON audit_logs(entity_type, entity_id);
+CREATE INDEX idx_audit_created_at ON audit_logs(created_at);
 ```
 
 ## 13. Related Documents
