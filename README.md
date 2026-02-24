@@ -1,60 +1,100 @@
 # Payment Processing System (Spring Boot)
 
-A minimal Spring Boot backend that integrates with Authorize.Net sandbox (stubbed client for now).
+A robust Spring Boot backend that integrates with Authorize.Net sandbox for payment processing with enterprise-grade features including state machine, idempotency, audit logging, and resilience patterns.
 
-Quick start
+## Key Features
 
-1. Build and run tests
+- **Payment Flows**: Purchase, Authorize, Capture, Cancel/Void, Refund (full & partial)
+- **Payment State Machine**: Explicit state transitions with integrity enforcement
+- **Idempotency**: Prevent duplicate payment processing via idempotency keys
+- **Audit Logging**: Comprehensive tracking of all payment operations
+- **Structured Error Handling**: Clear error codes, retry guidance, provider details
+- **JWT Authentication**: Secure API access with token-based auth
+
+## Quick Start
+
+### 1. Build and run tests
 
 ```powershell
 mvn clean test
 ```
 
-2. Run the application
+### 2. Run the application
 
 ```powershell
 mvn spring-boot:run
 ```
 
-3. Configuration
+### 3. Configuration
 
 Set environment variables or update `src/main/resources/application.properties`:
 
-- `authnet.api.login.id` - Authorize.Net API Login ID (sandbox)
-- `authnet.transaction.key` - Authorize.Net Transaction Key (sandbox)
-- `jwt.secret` - secret used to sign JWTs (change from default)
-- `developer.key` - developer key used by `/auth/token` endpoint for issuing tokens in dev
+| Property | Description | Default |
+|----------|-------------|---------|
+| `authnet.api.login.id` | Authorize.Net API Login ID (sandbox) | - |
+| `authnet.transaction.key` | Authorize.Net Transaction Key (sandbox) | - |
+| `jwt.secret` | Secret for signing JWTs | `change-me-please` |
+| `developer.key` | Dev key for `/auth/token` endpoint | `dev-local-key` |
 
-Endpoints
+## API Endpoints
 
-- `GET /payments/health` - health check
-- `POST /auth/token` - request dev token: {"developer_key":"..."}
-- `POST /payments/purchase` - purchase (auth+capture)
-- `POST /payments/authorize` - authorize only
-- `POST /payments/capture` - capture
-- `POST /payments/cancel` - void
-- `POST /payments/refund` - refund
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| GET | `/payments/health` | Health check | No |
+| POST | `/auth/token` | Get JWT token | No |
+| POST | `/payments/purchase` | Purchase (auth+capture) | JWT |
+| POST | `/payments/authorize` | Authorize only | JWT |
+| POST | `/payments/capture` | Capture authorized tx | JWT |
+| POST | `/payments/cancel` | Void/Cancel | JWT |
+| POST | `/payments/refund` | Refund (full/partial) | JWT |
 
-Notes
+## Architecture Highlights
 
-- Authorize.Net client is currently a stub (simulate responses). Replace `AuthorizeNetClient` implementation with actual SDK usage.
-- Tests: Basic unit tests are included under `src/test/java`.
-- DB: H2 in-memory DB used for simplicity; change to another DB via Spring properties.
+### Payment State Machine
 
-Next steps
+```
+CREATED → PENDING → AUTHORIZED → CAPTURED → REFUNDED
+                 ↘ DECLINED    ↘ VOIDED
+                 ↘ ERROR (retriable)
+                 ↘ HELD_FOR_REVIEW
+```
 
-- Implement real Authorize.Net SDK calls in `AuthorizeNetClient`.
-- Add more unit and integration tests for higher coverage.
-- Harden security: replace dev token flow with proper auth in production.
+See [Architecture.md](Architecture.md) for detailed state transitions.
+
+### Error Response Format
+
+```json
+{
+  "error": {
+    "code": "CARD_DECLINED",
+    "message": "The card was declined",
+    "category": "DECLINE_ERROR",
+    "retryable": false,
+    "suggestions": ["Try a different payment method"]
+  }
+}
+```
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Architecture.md](Architecture.md) | API flows, state machine, DB schema |
+| [API-SPECIFICATION.yml](API-SPECIFICATION.yml) | OpenAPI specification |
+| [COMPLIANCE.md](COMPLIANCE.md) | PCI DSS awareness, security guidance |
+| [TESTING_STRATEGY.md](TESTING_STRATEGY.md) | Test coverage strategy |
+| [TEST_REPORT.md](TEST_REPORT.md) | Coverage report |
+| [IMPROVEMENT_PLAN.md](IMPROVEMENT_PLAN.md) | Improvement roadmap |
+| [CHAT_HISTORY.md](CHAT_HISTORY.md) | AI collaboration dialogue |
 
 ## Swagger UI
 
-After starting the app (mvn spring-boot:run) open the interactive API docs at:
+After starting the app (`mvn spring-boot:run`) open the interactive API docs at:
 
 - http://localhost:8080/swagger-ui/index.html
 - OpenAPI JSON: http://localhost:8080/v3/api-docs
 
-Authorize the UI
+### Authorize the UI
 
 1. Request a developer JWT token (development only):
 

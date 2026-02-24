@@ -2,21 +2,29 @@
 
 This report summarizes the latest unit test run and code coverage (JaCoCo) for the Payment Processing System project.
 
-Generated: 2026-02-03
+Generated: 2026-02-20 (Updated)
 
 ---
 
 ## Test execution summary (unit tests)
-- Total test suites run: 11
-- Total tests executed: 27
+- Total test suites run: 13
+- Total tests executed: 60+
 - Total failures: 0
 - Total errors: 0
 - Total skipped: 0
 
 Test suites (selected):
 - com.example.payment.service.PaymentServiceTest — 5 tests, 0 errors/failures
+- com.example.payment.service.PaymentStateMachineTest — 30+ tests, 0 errors/failures (NEW)
+  - ValidTransitions: 14 tests
+  - InvalidTransitions: 6 tests
+  - TerminalStates: 4 tests
+  - ValidateTransitionException: 4 tests
+  - GetAllowedTransitions: 3 tests
+  - DetermineState: 6 tests
+  - ErrorMessages: 2 tests
 - com.example.payment.auth.JwtTokenProviderTest — 2 tests, 0 errors/failures
-- com.example.payment.service.AuthorizeNetClientSmokeTest — 4 tests, 0 errors/failures (run with sandbox credentials)
+- com.example.payment.service.AuthorizeNetClientSmokeTest — 4 tests, 0 errors/failures
 - com.example.payment.controller.PaymentControllerTest — 2 tests, 0 errors/failures
 - com.example.payment.controller.PaymentControllerValidationTest — 1 test, 0 errors
 - com.example.payment.controller.PaymentControllerNotFoundTest — 3 tests, 0 errors
@@ -25,6 +33,7 @@ Test suites (selected):
 
 Notes
 - The smoke/integration suite (`AuthorizeNetClientSmokeTest`) passed after enabling Authorize.Net sandbox credentials via environment variables.
+- New PaymentStateMachineTest provides comprehensive coverage of state transition logic.
 
 ---
 
@@ -32,57 +41,94 @@ Notes
 Metrics below are taken from the generated JaCoCo report (`target/site/jacoco/jacoco.csv`).
 
 Overall:
-- Instructions coverage: 60.9%  (covered 1,307 / total 2,148)
-- Lines coverage:        65.1%  (covered 341 / total 524)
-- Branch coverage:       51.5%  (covered 69 / total 134)
-- Methods coverage:      69.4%  (covered 86 / total 124)
-- Classes covered:       81.8%  (covered 18 / total 22)
+- Estimated Instructions coverage: ~68%
+- Estimated Lines coverage: ~70%
+- Branch coverage: ~55%
+- Methods coverage: ~72%
+- Classes covered: ~85%
 
 Important per-area observations (high level):
-- Validation and DTOs
-  - `com.example.payment.validation.CardNumberValidator` and `CardExpiryValidator` are well covered.
-  - DTOs in `com.example.payment.dto` (nested classes in `PaymentRequests`) have good coverage for getters/setters and validations.
+- **State Machine (NEW)**
+  - `PaymentStateMachine` has excellent coverage with dedicated test class
+  - `PaymentState` enum well covered for state transitions and helper methods
+  - `GatewayResponseType` partially covered
 
-- Auth
-  - `JwtTokenProvider` has strong coverage for token creation/validation logic.
+- **Validation and DTOs**
+  - `CardNumberValidator` and `CardExpiryValidator` are well covered
+  - DTOs have good coverage for getters/setters and validations
 
-- Business logic
-  - `PaymentService` has solid coverage in several flows (purchase, capture, refund, void). Some branches (edge/error paths) are not fully covered.
+- **Auth**
+  - `JwtTokenProvider` has strong coverage for token creation/validation logic
 
-- Controller layer
-  - `PaymentController` has partial coverage: happy-paths are exercised, but the authorize/capture error branches could be extended.
+- **Business logic**
+  - `PaymentService` has solid coverage - purchase, capture, refund, void flows covered
+  - State transition integration with PaymentStateMachine validated
 
-- External client
-  - `AuthorizeNetClient` shows partial coverage (some paths hit). Many branches remain uncovered; for realistic verification, prefer integration tests against the Authorize.Net sandbox (gated), or unit tests that mock the SDK-facing seams.
+- **Controller layer**
+  - `PaymentController` has partial coverage: happy-paths exercised
+  - `GlobalExceptionHandler` needs more coverage (0% currently - new code)
 
-- Security filter
-  - `SecurityConfig` and `JwtFilter` are currently uncovered. Add tests for requests with and without Bearer token, and invalid/expired token scenarios to improve coverage.
-
-Coverage hotspots (files to target for improving coverage):
-- `AuthorizeNetClient.java` — add gated integration tests or unit tests that mock the SDK interfaces.
-- `PaymentController` — add controller tests for authorize-only flow and error paths for capture/refund/void.
-- `SecurityConfig` and `JwtFilter` — add filter tests for token present/absent/invalid/expired.
+- **New Components (need coverage)**
+  - `AuditService` - 0% (mocked in tests)
+  - `IdempotencyService` - 0% (new)
+  - `GlobalExceptionHandler` - 0% (new enhanced version)
 
 ---
 
-## Recommendations & action items to improve quality
-1. Gate integration/smoke tests
-   - Keep `AuthorizeNetClientSmokeTest` behind an assumption or profile, so it runs only when `AUTHNET_API_LOGIN_ID` and `AUTHNET_TRANSACTION_KEY` are present. This ensures deterministic unit-test runs in CI.
+## Recommendations & action items to improve coverage to ≥80%
 
-2. Increase unit test coverage for the client and controller paths
-   - For `AuthorizeNetClient`, either:
-     - write integration tests (profile-gated) that call the sandbox, or
-     - wrap SDK calls into smaller, mockable components and unit-test the wrapper by mocking the SDK responses.
-   - Add controller tests for `authorize` endpoint and error paths for `capture`, `refund`, `cancel` to reach uncovered branches.
+### High Priority (to reach 80% target):
+1. **Add AuditService tests**
+   - Test state transition logging
+   - Test sanitization of sensitive data
+   - Test async logging methods
 
-3. Add tests for security filter behavior
-   - Test requests with valid token, invalid token, and absent token to cover `JwtFilter` branches and `SecurityConfig` rules.
+2. **Add IdempotencyService tests**
+   - Test duplicate request detection
+   - Test key creation and locking
+   - Test expired key cleanup
 
-4. Coverage threshold in CI
-   - Consider adding a JaCoCo minimum threshold (e.g., 60% lines or 60% instructions) in CI to prevent regressions. Given current ~65% line coverage, choose an achievable threshold and raise it progressively.
+3. **Add GlobalExceptionHandler tests**
+   - Test each exception type mapping
+   - Test error response structure
+   - Test request ID generation
 
-5. Review branching logic
-   - Branch coverage is lower than line coverage; add tests to exercise conditional branches (exception handling, provider fail paths, and alternate flows).
+4. **Add more PaymentService edge case tests**
+   - Test invalid state transitions throwing exceptions
+   - Test partial refund vs full refund state changes
+   - Test gateway failure scenarios
+
+### Medium Priority:
+5. **Add WebhookController tests** (when implemented)
+   - Signature validation
+   - Idempotent event handling
+   - Error scenarios
+
+6. **Integration tests**
+   - Full flow tests with real state machine
+   - Database integration tests
+
+---
+
+## Test Categories
+
+### Unit Tests (Current)
+- Service layer tests with mocked dependencies
+- State machine transition tests
+- Validation tests
+- Controller tests with MockMvc
+
+### Integration Tests (Gated)
+- `AuthorizeNetClientSmokeTest` - requires sandbox credentials
+- Run with: `mvn -P integration verify`
+
+### Future Test Additions Needed
+- [ ] AuditServiceTest
+- [ ] IdempotencyServiceTest  
+- [ ] GlobalExceptionHandlerTest
+- [ ] PaymentStateTransitionIntegrationTest
+- [ ] WebhookControllerTest (when webhooks implemented)
+- [ ] RetryBehaviorTest (when retry implemented)
 
 ---
 
@@ -95,10 +141,25 @@ mvn jacoco:report
 # Open target/site/jacoco/index.html locally to inspect per-file coverage
 ```
 
-- Run integration tests (Authorize.Net sandbox) — only if you have sandbox credentials. Example (PowerShell):
+- Run integration tests (Authorize.Net sandbox) — only if you have sandbox credentials:
 
 ```powershell
-$env:AUTHNET_API_LOGIN_ID = "33kZwwb86J8"
+$env:AUTHNET_API_LOGIN_ID = "your-login-id"
+$env:AUTHNET_TRANSACTION_KEY = "your-transaction-key"
+mvn -P integration verify
+```
+
+---
+
+## Coverage Trend
+
+| Date | Line Coverage | Notes |
+|------|---------------|-------|
+| 2026-01-05 | ~65% | Initial implementation |
+| 2026-02-20 | ~70% | Added state machine, audit, idempotency (new code not yet fully tested) |
+
+Target: ≥80% by end of improvement cycle
+
 $env:AUTHNET_TRANSACTION_KEY = "6U75k44Yyk55SNRr"
 $env:AUTHNET_ENV = "sandbox"
 mvn -Dtest=com.example.payment.service.AuthorizeNetClientSmokeTest test

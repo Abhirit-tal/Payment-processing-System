@@ -7,10 +7,80 @@ Checklist
 - [x] High-level flow descriptions (Purchase, Authorize+Capture, Cancel, Refund)
 - [x] DB schema: tables, columns, constraints and example CREATE TABLE SQL
 - [x] JPA entity relationship summary
+- [x] Payment state machine diagram
+- [x] Error handling and response schemas
 
 1. Overview
 
 This service exposes a small REST API for common payment flows backed by Authorize.Net (sandbox). The service secures API endpoints with JWTs issued by a development exchange endpoint.
+
+**Key Architectural Components:**
+- **Payment State Machine**: Enforces valid state transitions with integrity guards
+- **Idempotency Support**: Prevents duplicate payment processing via idempotency keys
+- **Audit Logging**: Comprehensive tracking of all payment operations
+- **Error Handling**: Structured error responses with retry guidance
+
+## Payment State Machine
+
+The system uses an explicit state machine to manage payment lifecycle with enforced transitions:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        PAYMENT STATE TRANSITIONS                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│    ┌─────────┐                                                              │
+│    │ CREATED │──────────────────────────────────┐                          │
+│    └────┬────┘                                  │                          │
+│         │ initiate_payment                      │                          │
+│         ▼                                       │                          │
+│    ┌─────────┐                                  │                          │
+│    │ PENDING │──────────┬───────────────────────┼────────────────┐         │
+│    └────┬────┘          │                       │                │         │
+│         │               │                       │                │         │
+│    ┌────┴────┐     ┌────┴────┐            ┌────┴────┐      ┌────┴─────┐   │
+│    │AUTHORIZED│     │CAPTURED │            │DECLINED │      │  ERROR   │   │
+│    └────┬────┘     └────┬────┘            └─────────┘      └────┬─────┘   │
+│         │               │                   (terminal)          │         │
+│    ┌────┴────┐     ┌────┴────────────────┐                      │         │
+│    │         │     │                     │              ┌───────┘         │
+│    ▼         ▼     ▼                     ▼              ▼                 │
+│ ┌──────┐ ┌──────┐ ┌─────────────────┐ ┌────────┐  ┌─────────┐            │
+│ │VOIDED│ │CAPTURE│ │PARTIALLY_REFUNDED│ │REFUNDED│  │ (retry) │            │
+│ └──────┘ └──────┘ └────────┬────────┘ └────────┘  └────┬────┘            │
+│ (terminal)               │          (terminal)        │                  │
+│                          └──────────────────────────────┘                 │
+│                                                                             │
+│  Also: PENDING → HELD_FOR_REVIEW → AUTHORIZED or DECLINED                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### State Definitions
+
+| State | Description | Terminal? |
+|-------|-------------|-----------|
+| CREATED | Order created, payment not yet initiated | No |
+| PENDING | Payment request sent, awaiting gateway response | No |
+| AUTHORIZED | Auth-only approved, funds held | No |
+| CAPTURED | Payment captured, funds will settle | No |
+| VOIDED | Auth cancelled before capture | Yes |
+| REFUNDED | Full refund processed | Yes |
+| PARTIALLY_REFUNDED | Partial refund processed | No |
+| DECLINED | Gateway/issuer declined | Yes |
+| ERROR | Gateway error (may be retriable) | No |
+| HELD_FOR_REVIEW | Flagged for fraud review | No |
+
+### Valid State Transitions
+
+| From State | Allowed Transitions |
+|------------|---------------------|
+| CREATED | PENDING |
+| PENDING | AUTHORIZED, CAPTURED, DECLINED, ERROR, HELD_FOR_REVIEW |
+| AUTHORIZED | CAPTURED, VOIDED, ERROR |
+| CAPTURED | REFUNDED, PARTIALLY_REFUNDED |
+| PARTIALLY_REFUNDED | REFUNDED, PARTIALLY_REFUNDED |
+| ERROR | PENDING (retry) |
+| HELD_FOR_REVIEW | AUTHORIZED, DECLINED |
 
 2. Authentication
 
@@ -198,14 +268,203 @@ curl -s -X POST "http://localhost:8080/payments/purchase" \
   -H "Content-Type: application/json" \
   -d '{"amount": 10.50, "currency":"USD", "card": {"number":"4111111111111111","expMonth":12,"expYear":2030,"cvv":"123"}, "orderId":"ext-123"}'
 
-10. Next steps (recommended)
-- Add database migrations and adjust production-ready configuration.
-- Improve error mapping with structured error codes and provider error translation.
-- Add more tests for partial refunds, concurrency, and edge cases.
-- Add metrics, logging correlation ids and request tracing for provider calls.
+## 10. Error Handling
 
+### Structured Error Response Format
+
+All errors return a consistent JSON structure:
+
+```json
+{
+  "error": {
+    "code": "CARD_DECLINED",
+    "message": "The card was declined by the issuing bank",
+    "category": "DECLINE_ERROR",
+    "retryable": false,
+    "provider_error": {
+      "code": "2",
+      "message": "This transaction has been declined",
+      "avs_result": "N",
+      "cvv_result": "N"
+    },
+    "suggestions": [
+      "Try a different payment method",
+      "Contact your card issuer"
+    ],
+    "request_id": "req_abc123def456",
+    "timestamp": "2026-02-20T10:30:00Z"
+  }
+}
+```
+
+### Error Categories
+
+| Category | HTTP Status | Description | Retryable |
+|----------|-------------|-------------|-----------|
+| VALIDATION_ERROR | 400 | Invalid request data | No |
+| DECLINE_ERROR | 400 | Card declined by issuer | No* |
+| STATE_ERROR | 409 | Invalid state transition | No |
+| GATEWAY_ERROR | 502/503/504 | Payment gateway issue | Yes |
+| INTERNAL_ERROR | 500 | Unexpected server error | Maybe |
+
+*Different card may succeed
+
+### Common Error Codes
+
+| Code | Description |
+|------|-------------|
+| INVALID_CARD_NUMBER | Card number failed Luhn validation |
+| INVALID_EXPIRY | Card expiration date is invalid or past |
+| INVALID_CVV | CVV format is incorrect |
+| CARD_DECLINED | Gateway declined the transaction |
+| INSUFFICIENT_FUNDS | Not enough funds on card |
+| INVALID_STATE_TRANSITION | Operation not allowed in current state |
+| GATEWAY_TIMEOUT | Gateway did not respond in time |
+| TRANSACTION_NOT_FOUND | Referenced transaction does not exist |
+| IDEMPOTENCY_CONFLICT | Duplicate request with different body |
+
+## 11. Sequence Diagrams
+
+### Purchase Flow (Happy Path)
+
+```
+Client              API              PaymentService        Gateway
+  │                  │                     │                  │
+  │ POST /purchase   │                     │                  │
+  │ ─────────────────>                     │                  │
+  │                  │ validate request    │                  │
+  │                  │ create Order        │                  │
+  │                  │ ────────────────────>                  │
+  │                  │                     │ state: CREATED   │
+  │                  │                     │ state: PENDING   │
+  │                  │                     │                  │
+  │                  │                     │ AUTH_CAPTURE     │
+  │                  │                     │ ─────────────────>
+  │                  │                     │                  │
+  │                  │                     │     APPROVED     │
+  │                  │                     │ <─────────────────
+  │                  │                     │                  │
+  │                  │                     │ state: CAPTURED  │
+  │                  │ audit: PURCHASE     │                  │
+  │                  │ <────────────────────                  │
+  │                  │                     │                  │
+  │ 201 Created      │                     │                  │
+  │ <─────────────────                     │                  │
+```
+
+### Authorize + Capture Flow (Two-Step)
+
+```
+Client              API              PaymentService        Gateway
+  │                  │                     │                  │
+  │ POST /authorize  │                     │                  │
+  │ ─────────────────>                     │                  │
+  │                  │                     │ AUTH_ONLY        │
+  │                  │                     │ ─────────────────>
+  │                  │                     │     APPROVED     │
+  │                  │                     │ <─────────────────
+  │                  │                     │ state: AUTHORIZED│
+  │ 201 Created      │                     │                  │
+  │ <─────────────────                     │                  │
+  │                  │                     │                  │
+  │    ... later ... │                     │                  │
+  │                  │                     │                  │
+  │ POST /capture    │                     │                  │
+  │ ─────────────────>                     │                  │
+  │                  │ check state         │                  │
+  │                  │ (must be AUTHORIZED)│                  │
+  │                  │                     │ PRIOR_AUTH_CAPTURE│
+  │                  │                     │ ─────────────────>
+  │                  │                     │     APPROVED     │
+  │                  │                     │ <─────────────────
+  │                  │                     │ state: CAPTURED  │
+  │ 200 OK           │                     │                  │
+  │ <─────────────────                     │                  │
+```
+
+### Idempotency Flow
+
+```
+Client              IdempotencyFilter    IdempotencyService    PaymentService
+  │                      │                     │                    │
+  │ POST /purchase       │                     │                    │
+  │ Idempotency-Key: xyz │                     │                    │
+  │ ─────────────────────>                     │                    │
+  │                      │ check key           │                    │
+  │                      │ ────────────────────>                    │
+  │                      │    not found        │                    │
+  │                      │ <────────────────────                    │
+  │                      │                     │                    │
+  │                      │ create & lock key   │                    │
+  │                      │ ────────────────────>                    │
+  │                      │                     │                    │
+  │                      │ process payment     │                    │
+  │                      │ ─────────────────────────────────────────>
+  │                      │                     │     result         │
+  │                      │ <─────────────────────────────────────────
+  │                      │                     │                    │
+  │                      │ complete key (cache)│                    │
+  │                      │ ────────────────────>                    │
+  │ 201 Created          │                     │                    │
+  │ <─────────────────────                     │                    │
+  │                      │                     │                    │
+  │ POST /purchase       │                     │                    │
+  │ Idempotency-Key: xyz │ (retry)             │                    │
+  │ ─────────────────────>                     │                    │
+  │                      │ check key           │                    │
+  │                      │ ────────────────────>                    │
+  │                      │  found & completed  │                    │
+  │                      │ <────────────────────                    │
+  │ 201 Created (cached) │                     │                    │
+  │ <─────────────────────                     │                    │
+```
+
+## 12. Additional Tables (New)
+
+### 5.4. idempotency_keys table
+```sql
+CREATE TABLE idempotency_keys (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    idempotency_key VARCHAR(255) UNIQUE NOT NULL,
+    request_hash VARCHAR(64) NOT NULL,
+    request_path VARCHAR(255),
+    request_method VARCHAR(10),
+    response_body TEXT,
+    response_status INT,
+    order_id BIGINT,
+    created_at TIMESTAMP NOT NULL,
+    expires_at TIMESTAMP NOT NULL,
+    locked_at TIMESTAMP,
+    completed_at TIMESTAMP,
+    INDEX idx_expires_at (expires_at)
+);
+```
+
+### 5.5. audit_logs table
+```sql
+CREATE TABLE audit_logs (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    entity_type VARCHAR(50) NOT NULL,
+    entity_id BIGINT NOT NULL,
+    action VARCHAR(50) NOT NULL,
+    actor VARCHAR(255),
+    actor_ip VARCHAR(45),
+    old_value TEXT,
+    new_value TEXT,
+    metadata TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_entity (entity_type, entity_id),
+    INDEX idx_created_at (created_at)
+);
+```
+
+## 13. Related Documents
+
+- [COMPLIANCE.md](COMPLIANCE.md) - PCI DSS awareness and security guidance
+- [IMPROVEMENT_PLAN.md](IMPROVEMENT_PLAN.md) - Detailed improvement roadmap
+- [TESTING_STRATEGY.md](TESTING_STRATEGY.md) - Test coverage strategy
+- [API-SPECIFICATION.yml](API-SPECIFICATION.yml) - OpenAPI specification
 
 ---
 
-Generated: 2026-01-05
-
+Generated: 2026-02-20 (Updated)

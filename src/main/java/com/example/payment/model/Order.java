@@ -20,14 +20,32 @@ public class Order {
     @Column(nullable = false)
     private BigDecimal amount;
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 30)
+    private PaymentState state = PaymentState.CREATED;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "previous_state", length = 30)
+    private PaymentState previousState;
+
+    @Column(name = "state_changed_at")
+    private Instant stateChangedAt;
+
+    /**
+     * @deprecated Use {@link #state} instead. Kept for backward compatibility.
+     */
+    @Deprecated
     @Column(nullable = false)
-    private String status; // processing, authorized, captured, refunded, cancelled, failed
+    private String status; // Legacy field - use state instead
 
     @Column(name = "created_at", nullable = false)
     private Instant createdAt = Instant.now();
 
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt = Instant.now();
+
+    @Column(name = "idempotency_key", unique = true)
+    private String idempotencyKey;
 
     // getters and setters
 
@@ -69,6 +87,51 @@ public class Order {
 
     public void setStatus(String status) {
         this.status = status;
+    }
+
+    public PaymentState getState() {
+        return state;
+    }
+
+    public void setState(PaymentState state) {
+        this.state = state;
+    }
+
+    public PaymentState getPreviousState() {
+        return previousState;
+    }
+
+    public void setPreviousState(PaymentState previousState) {
+        this.previousState = previousState;
+    }
+
+    public Instant getStateChangedAt() {
+        return stateChangedAt;
+    }
+
+    public void setStateChangedAt(Instant stateChangedAt) {
+        this.stateChangedAt = stateChangedAt;
+    }
+
+    public String getIdempotencyKey() {
+        return idempotencyKey;
+    }
+
+    public void setIdempotencyKey(String idempotencyKey) {
+        this.idempotencyKey = idempotencyKey;
+    }
+
+    /**
+     * Transition the order to a new state, recording the previous state.
+     * This method should be called through PaymentStateMachine for validation.
+     */
+    public void transitionTo(PaymentState newState) {
+        this.previousState = this.state;
+        this.state = newState;
+        this.stateChangedAt = Instant.now();
+        this.updatedAt = Instant.now();
+        // Sync legacy status field for backward compatibility
+        this.status = newState.getCode();
     }
 
     public Instant getCreatedAt() {
