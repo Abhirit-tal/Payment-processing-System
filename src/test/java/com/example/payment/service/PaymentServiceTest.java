@@ -1,5 +1,6 @@
 package com.example.payment.service;
 
+import com.example.payment.event.PaymentEventQueue;
 import com.example.payment.model.Order;
 import com.example.payment.model.PaymentState;
 import com.example.payment.model.Transaction;
@@ -25,6 +26,7 @@ public class PaymentServiceTest {
     private TransactionRepository transactionRepository;
     private PaymentStateMachine stateMachine;
     private AuditService auditService;
+    private PaymentEventQueue eventQueue;
     private PaymentService paymentService;
 
     @BeforeEach
@@ -34,7 +36,8 @@ public class PaymentServiceTest {
         transactionRepository = Mockito.mock(TransactionRepository.class);
         stateMachine = Mockito.mock(PaymentStateMachine.class);
         auditService = Mockito.mock(AuditService.class);
-        paymentService = new PaymentService(authorizeNetClient, orderRepository, transactionRepository, stateMachine, auditService);
+        eventQueue = Mockito.mock(PaymentEventQueue.class);
+        paymentService = new PaymentService(authorizeNetClient, orderRepository, transactionRepository, stateMachine, auditService, eventQueue);
 
         // Default mocks for state machine - allow all transitions
         when(stateMachine.canTransition(any(), any())).thenReturn(true);

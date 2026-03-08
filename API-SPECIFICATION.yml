@@ -1,8 +1,12 @@
 openapi: 3.0.3
 info:
   title: Payment Processing System API
-  description: API for payment flows (Authorize.Net sandbox integration). Contains endpoints for Purchase, Authorize, Capture, Cancel (void) and Refund. JWT bearer is used to protect endpoints.
-  version: 1.0.0
+  description: |
+    API for payment flows (Authorize.Net sandbox integration). Contains endpoints for Purchase, Authorize, Capture, Cancel (void), Refund, Recurring Billing (Subscriptions), and Webhook handling. 
+    JWT bearer is used to protect payment endpoints. Webhooks use HMAC signature validation. 
+    All mutating endpoints support Idempotency-Key header for safe retries. 
+    All responses include X-Correlation-ID for distributed tracing.
+  version: 2.0.0
 servers:
   - url: http://localhost:8080
 security:
@@ -73,6 +77,9 @@ paths:
         - payments
       security:
         - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationId'
       requestBody:
         required: true
         content:
@@ -92,6 +99,36 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ValidationErrorResponse'
+        '422':
+          description: Payment declined by gateway (card declined, insufficient funds, fraud hold)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentDeclinedResponse'
+        '502':
+          description: Gateway error (Authorize.Net returned an error or is unreachable)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GatewayErrorResponse'
+        '504':
+          description: Gateway timeout (Authorize.Net did not respond in time)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GatewayTimeoutResponse'
+        '409':
+          description: Idempotency conflict (different request body for same key)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RateLimitResponse'
 
   /payments/authorize:
     post:
@@ -100,6 +137,9 @@ paths:
         - payments
       security:
         - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationId'
       requestBody:
         required: true
         content:
@@ -119,6 +159,30 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ValidationErrorResponse'
+        '422':
+          description: Payment declined by gateway
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentDeclinedResponse'
+        '502':
+          description: Gateway error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GatewayErrorResponse'
+        '504':
+          description: Gateway timeout
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GatewayTimeoutResponse'
+        '409':
+          description: Idempotency conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /payments/capture:
     post:
@@ -127,6 +191,9 @@ paths:
         - payments
       security:
         - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationId'
       requestBody:
         required: true
         content:
@@ -152,6 +219,36 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Idempotency conflict or invalid state transition
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Capture declined by gateway
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentDeclinedResponse'
+        '429':
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RateLimitResponse'
+        '502':
+          description: Gateway error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GatewayErrorResponse'
+        '504':
+          description: Gateway timeout
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GatewayTimeoutResponse'
 
   /payments/cancel:
     post:
@@ -160,6 +257,9 @@ paths:
         - payments
       security:
         - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationId'
       requestBody:
         required: true
         content:
@@ -179,6 +279,36 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Idempotency conflict or invalid state transition
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Cancel declined by gateway
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentDeclinedResponse'
+        '429':
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RateLimitResponse'
+        '502':
+          description: Gateway error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GatewayErrorResponse'
+        '504':
+          description: Gateway timeout
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GatewayTimeoutResponse'
 
   /payments/refund:
     post:
@@ -187,6 +317,9 @@ paths:
         - payments
       security:
         - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationId'
       requestBody:
         required: true
         content:
@@ -212,6 +345,187 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Idempotency conflict or invalid state transition
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Refund declined by gateway
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentDeclinedResponse'
+        '429':
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RateLimitResponse'
+        '502':
+          description: Gateway error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GatewayErrorResponse'
+        '504':
+          description: Gateway timeout
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GatewayTimeoutResponse'
+
+  /payments/subscriptions:
+    post:
+      summary: Create a recurring billing subscription
+      tags:
+        - subscriptions
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSubscriptionRequest'
+      responses:
+        '201':
+          description: Subscription created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionResponse'
+        '400':
+          description: Validation error
+        '502':
+          description: Gateway error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentErrorResponse'
+
+  /payments/subscriptions/{id}:
+    get:
+      summary: Get subscription by ID
+      tags:
+        - subscriptions
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Subscription details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionResponse'
+        '404':
+          description: Subscription not found
+    put:
+      summary: Update a subscription
+      tags:
+        - subscriptions
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSubscriptionRequest'
+      responses:
+        '200':
+          description: Subscription updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionResponse'
+        '404':
+          description: Subscription not found or update failed
+    delete:
+      summary: Cancel a subscription
+      tags:
+        - subscriptions
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Subscription cancelled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  status:
+                    type: string
+                    example: cancelled
+                  cancelled_at:
+                    type: string
+                    format: date-time
+        '404':
+          description: Subscription not found
+
+  /webhooks/authorize-net:
+    post:
+      summary: Receive Authorize.Net webhook events
+      description: |
+        Validates HMAC signature, deduplicates by notificationId, persists event, 
+        and queues for async processing. NOT protected by JWT — uses HMAC signature.
+      tags:
+        - webhooks
+      security: []
+      parameters:
+        - name: X-ANET-Signature
+          in: header
+          required: false
+          description: SHA-512 HMAC signature of the payload
+          schema:
+            type: string
+            example: "sha512=ABCDEF..."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                notificationId:
+                  type: string
+                eventType:
+                  type: string
+                  example: net.authorize.payment.authcapture.created
+      responses:
+        '200':
+          description: Webhook received or already processed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookResponse'
+        '401':
+          description: Invalid webhook signature
 
 components:
   securitySchemes:
@@ -353,9 +667,251 @@ components:
             amount: "must be >= 0.01"
             card.number: "invalid card number"
 
+    PaymentErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              example: GATEWAY_TIMEOUT
+            message:
+              type: string
+              example: The payment gateway timed out
+            category:
+              type: string
+              example: GATEWAY_ERROR
+            retryable:
+              type: boolean
+              example: true
+            retry_after_seconds:
+              type: integer
+              example: 5
+            provider_error:
+              type: object
+              properties:
+                code:
+                  type: string
+                message:
+                  type: string
+            suggestions:
+              type: array
+              items:
+                type: string
+            request_id:
+              type: string
+              example: req_abc123
+            timestamp:
+              type: string
+              format: date-time
+
+    CreateSubscriptionRequest:
+      type: object
+      required:
+        - name
+        - amount
+        - startDate
+        - card
+      properties:
+        name:
+          type: string
+          example: Monthly Premium Plan
+        amount:
+          type: number
+          format: decimal
+          example: 29.99
+        intervalLength:
+          type: integer
+          example: 1
+          default: 1
+        intervalUnit:
+          type: string
+          enum: [days, months]
+          example: months
+          default: months
+        startDate:
+          type: string
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+          example: "2026-04-01"
+        card:
+          $ref: '#/components/schemas/Card'
+
+    UpdateSubscriptionRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          example: Annual Premium Plan
+        amount:
+          type: number
+          format: decimal
+          example: 49.99
+
+    SubscriptionResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        gateway_subscription_id:
+          type: string
+          example: "12345"
+        name:
+          type: string
+          example: Monthly Premium Plan
+        amount:
+          type: number
+          example: 29.99
+        interval:
+          type: string
+          example: "1 months"
+        start_date:
+          type: string
+          example: "2026-04-01"
+        status:
+          type: string
+          enum: [active, suspended, cancelled, expired, failed]
+          example: active
+        created_at:
+          type: string
+          format: date-time
+
+    WebhookResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [received, already_processed]
+        notification_id:
+          type: string
+        event_id:
+          type: integer
+
+    PaymentDeclinedResponse:
+      type: object
+      description: Returned when Authorize.Net declines the transaction (card declined, AVS mismatch, fraud hold)
+      properties:
+        error_code:
+          type: string
+          enum: [CARD_DECLINED, INSUFFICIENT_FUNDS, FRAUD_SUSPECTED, AVS_MISMATCH]
+          example: CARD_DECLINED
+        message:
+          type: string
+          example: "Transaction was declined by the issuing bank"
+        category:
+          type: string
+          enum: [DECLINE]
+          example: DECLINE
+        retryable:
+          type: boolean
+          example: false
+        request_id:
+          type: string
+          example: "req_abc12345"
+
+    GatewayErrorResponse:
+      type: object
+      description: Returned when Authorize.Net returns an error or is unreachable
+      properties:
+        error_code:
+          type: string
+          enum: [GATEWAY_ERROR, GATEWAY_UNAVAILABLE, GATEWAY_COMMUNICATION_ERROR]
+          example: GATEWAY_ERROR
+        message:
+          type: string
+          example: "Payment gateway returned an error"
+        category:
+          type: string
+          enum: [GATEWAY]
+          example: GATEWAY
+        retryable:
+          type: boolean
+          example: true
+        retry_after_seconds:
+          type: integer
+          description: Suggested wait time before retry (exponential backoff)
+          example: 5
+        request_id:
+          type: string
+          example: "req_abc12345"
+
+    GatewayTimeoutResponse:
+      type: object
+      description: Returned when Authorize.Net does not respond within timeout window
+      properties:
+        error_code:
+          type: string
+          enum: [GATEWAY_TIMEOUT]
+          example: GATEWAY_TIMEOUT
+        message:
+          type: string
+          example: "Payment gateway did not respond in time"
+        category:
+          type: string
+          enum: [GATEWAY]
+          example: GATEWAY
+        retryable:
+          type: boolean
+          example: true
+        retry_after_seconds:
+          type: integer
+          example: 10
+        request_id:
+          type: string
+          example: "req_abc12345"
+
+    RateLimitResponse:
+      type: object
+      description: Returned when API rate limit is exceeded (Resilience4j @RateLimiter)
+      properties:
+        error_code:
+          type: string
+          enum: [RATE_LIMIT_EXCEEDED]
+          example: RATE_LIMIT_EXCEEDED
+        message:
+          type: string
+          example: "Too many requests. Please retry after a short delay."
+        retryable:
+          type: boolean
+          example: true
+        retry_after_seconds:
+          type: integer
+          description: Suggested wait time before retrying
+          example: 1
+        suggestion:
+          type: string
+          example: "Reduce request frequency or implement backoff"
+        request_id:
+          type: string
+          example: "req_abc12345"
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: Idempotency key for safe retries (24h TTL). Same key + same body returns cached response.
+      schema:
+        type: string
+        example: "purchase-order-123-v1"
+
+    CorrelationId:
+      name: X-Correlation-ID
+      in: header
+      required: false
+      description: Correlation ID for distributed tracing. Auto-generated if not provided.
+      schema:
+        type: string
+        example: "abc12345-6789-def0"
+
 tags:
   - name: payments
     description: Payment endpoints (purchase, authorize, capture, cancel, refund)
+  - name: subscriptions
+    description: Recurring Billing / Subscription Management
+  - name: webhooks
+    description: Async payment event handlers (Authorize.Net webhooks)
   - name: auth
     description: Authentication helpers (development only)
 

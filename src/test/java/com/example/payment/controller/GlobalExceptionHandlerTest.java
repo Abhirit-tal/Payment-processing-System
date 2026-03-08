@@ -4,6 +4,9 @@ import com.example.payment.dto.PaymentErrorCode;
 import com.example.payment.dto.PaymentErrorResponse;
 import com.example.payment.exception.*;
 import com.example.payment.model.PaymentState;
+import io.github.resilience4j.ratelimiter.RequestNotPermitted;
+import io.github.resilience4j.ratelimiter.RateLimiter;
+import io.github.resilience4j.ratelimiter.RateLimiterConfig;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -227,6 +230,22 @@ public class GlobalExceptionHandlerTest {
 
         assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
         assertTrue(response.getBody().getError().getMessage().contains("Validation failed"));
+    }
+
+    @Test
+    void testHandleRateLimitExceeded() {
+        RateLimiter rateLimiter = RateLimiter.of("test", RateLimiterConfig.custom()
+                .limitForPeriod(1)
+                .build());
+        RequestNotPermitted ex = RequestNotPermitted.createRequestNotPermitted(rateLimiter);
+
+        ResponseEntity<PaymentErrorResponse> response = handler.handleRateLimitExceeded(ex, mockRequest);
+
+        assertEquals(HttpStatus.TOO_MANY_REQUESTS, response.getStatusCode());
+        assertNotNull(response.getBody());
+        assertEquals("RATE_LIMIT_EXCEEDED", response.getBody().getError().getCode());
+        assertTrue(response.getBody().getError().getMessage().contains("Too many requests"));
+        assertEquals("test-request-id", response.getBody().getError().getRequestId());
     }
 }
 

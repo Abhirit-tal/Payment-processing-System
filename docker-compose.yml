@@ -20,6 +20,37 @@ services:
       retries: 5
     restart: unless-stopped
 
+  # RabbitMQ Message Broker for durable async event processing
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    container_name: payment-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    ports:
+      - "5672:5672"    # AMQP protocol
+      - "15672:15672"  # Management UI
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Jaeger — Distributed Tracing (OpenTelemetry collector + UI)
+  jaeger:
+    image: jaegertracing/all-in-one:1.51
+    container_name: payment-jaeger
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "4317:4317"    # OTLP gRPC
+      - "4318:4318"    # OTLP HTTP
+    restart: unless-stopped
+
   # Spring Boot Application
   app:
     build: .
@@ -31,16 +62,27 @@ services:
       - DATABASE_URL=jdbc:postgresql://postgres:5432/payments
       - DATABASE_USERNAME=postgres
       - DATABASE_PASSWORD=postgres
+      # RabbitMQ connection
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USERNAME=guest
+      - RABBITMQ_PASSWORD=guest
+      # Distributed Tracing — send traces to Jaeger via OTLP
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318/v1/traces
+      - TRACING_SAMPLE_RATE=1.0
       # Authorize.Net
       - AUTHNET_ENV=sandbox
-      - AUTHNET_API_LOGIN_ID=93yUVrZMb2vt
-      - AUTHNET_TRANSACTION_KEY=3F267WYmm4aL2KaU
+      - AUTHNET_API_LOGIN_ID=${AUTHNET_API_LOGIN_ID:-}
+      - AUTHNET_TRANSACTION_KEY=${AUTHNET_TRANSACTION_KEY:-}
+      - AUTHNET_WEBHOOK_SIGNATURE_KEY=${AUTHNET_WEBHOOK_SIGNATURE_KEY:-}
       # JWT (use a stable secret so tokens remain valid across restarts)
-      - JWT_SECRET=super-secret-key-please-change-0123456789abcdef
-      - DEVELOPER_KEY=dev-local-key
+      - JWT_SECRET=${JWT_SECRET:-super-secret-key-please-change-0123456789abcdef}
+      - DEVELOPER_KEY=${DEVELOPER_KEY:-dev-local-key}
       - JAVA_TOOL_OPTIONS=-Dserver.port=8080
     depends_on:
       postgres:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://127.0.0.1:8080/payments/health || exit 1"]
@@ -50,6 +92,23 @@ services:
       retries: 6
     restart: unless-stopped
 
+  # ==================== Optional: HashiCorp Vault (Secrets Management) ====================
+  # Start with: docker-compose --profile vault up
+  vault:
+    image: hashicorp/vault:1.15
+    container_name: payment-vault
+    cap_add:
+      - IPC_LOCK
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: root
+      VAULT_DEV_LISTEN_ADDRESS: "0.0.0.0:8200"
+    ports:
+      - "8200:8200"
+    profiles:
+      - vault
+    restart: unless-stopped
+
 volumes:
   postgres_data:
+  rabbitmq_data:
 

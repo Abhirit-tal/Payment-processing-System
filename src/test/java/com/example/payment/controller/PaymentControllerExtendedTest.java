@@ -4,7 +4,9 @@ import com.example.payment.exception.InvalidStateTransitionException;
 import com.example.payment.model.Order;
 import com.example.payment.model.PaymentState;
 import com.example.payment.model.Transaction;
+import com.example.payment.service.IdempotencyService;
 import com.example.payment.service.PaymentService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -30,11 +32,13 @@ public class PaymentControllerExtendedTest {
 
     private MockMvc mockMvc;
     private PaymentService paymentService;
+    private IdempotencyService idempotencyService;
 
     @BeforeEach
     void setup() {
         paymentService = mock(PaymentService.class);
-        PaymentController controller = new PaymentController(paymentService);
+        idempotencyService = mock(IdempotencyService.class);
+        PaymentController controller = new PaymentController(paymentService, idempotencyService, new ObjectMapper());
         mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
     }
 

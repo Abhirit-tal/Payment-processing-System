@@ -20,8 +20,14 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Create non-root user for security
+RUN addgroup --system appgroup && adduser --system appuser --ingroup appgroup
+
 # Copy jar from build stage
 COPY --from=build /workspace/target/payment-processing-system-0.0.1-SNAPSHOT.jar app.jar
+
+# Switch to non-root user
+USER appuser
 
 EXPOSE 8080
 ENTRYPOINT ["java", "-jar", "/app/app.jar"]

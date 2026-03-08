@@ -1,5 +1,7 @@
 package com.example.payment.service;
 
+import com.example.payment.event.PaymentEvent;
+import com.example.payment.event.PaymentEventQueue;
 import com.example.payment.exception.InvalidStateTransitionException;
 import com.example.payment.model.GatewayResponseType;
 import com.example.payment.model.Order;
@@ -13,7 +15,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
 
@@ -45,17 +46,20 @@ public class PaymentService {
     private final TransactionRepository transactionRepository;
     private final PaymentStateMachine stateMachine;
     private final AuditService auditService;
+    private final PaymentEventQueue eventQueue;
 
     public PaymentService(AuthorizeNetClient authorizeNetClient,
                          OrderRepository orderRepository,
                          TransactionRepository transactionRepository,
                          PaymentStateMachine stateMachine,
-                         AuditService auditService) {
+                         AuditService auditService,
+                         PaymentEventQueue eventQueue) {
         this.authorizeNetClient = authorizeNetClient;
         this.orderRepository = orderRepository;
         this.transactionRepository = transactionRepository;
         this.stateMachine = stateMachine;
         this.auditService = auditService;
+        this.eventQueue = eventQueue;
     }
 
     @Transactional
@@ -140,6 +144,10 @@ public class PaymentService {
         transactionRepository.save(captureTx);
         auditService.logGatewayResponseAsync(order.getId(), "CAPTURE", "success".equals(status), status);
 
+        if ("success".equals(status)) {
+            eventQueue.publish(PaymentEvent.of(PaymentEvent.CAPTURE_SUCCESS, order.getId(), captureTx.getProviderTxId()));
+        }
+
         return Optional.of(captureTx);
     }
 
@@ -177,6 +185,10 @@ public class PaymentService {
 
         transactionRepository.save(tx);
         auditService.logGatewayResponseAsync(order.getId(), "VOID", "success".equals(status), status);
+
+        if ("success".equals(status)) {
+            eventQueue.publish(PaymentEvent.of(PaymentEvent.VOID_SUCCESS, order.getId(), tx.getProviderTxId()));
+        }
 
         return Optional.of(tx);
     }
@@ -223,6 +235,10 @@ public class PaymentService {
 
         transactionRepository.save(refundTx);
         auditService.logGatewayResponseAsync(order.getId(), "REFUND", "success".equals(status), status);
+
+        if ("success".equals(status)) {
+            eventQueue.publish(PaymentEvent.of(PaymentEvent.REFUND_SUCCESS, order.getId(), refundTx.getProviderTxId()));
+        }
 
         return Optional.of(refundTx);
     }
@@ -314,6 +330,12 @@ public class PaymentService {
         auditService.logGatewayResponseAsync(order.getId(),
                 isCapture ? "AUTH_CAPTURE" : "AUTH_ONLY",
                 "success".equals(status), status);
+
+        // Publish event for async processing
+        String eventType = "success".equals(status)
+                ? (isCapture ? PaymentEvent.PURCHASE_SUCCESS : PaymentEvent.AUTHORIZE_SUCCESS)
+                : PaymentEvent.PURCHASE_FAILED;
+        eventQueue.publish(PaymentEvent.of(eventType, order.getId(), tx.getProviderTxId()));
 
         return tx;
     }

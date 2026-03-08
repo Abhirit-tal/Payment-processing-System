@@ -250,7 +250,7 @@ CREATE INDEX idx_transactions_provider_tx_id ON transactions(provider_tx_id);
 
 - JWT secret handling: if `jwt.secret` is not set or left as default `change-me-please`, the application generates a random signing key for development convenience — do not use that in production.
 
-- DB migrations: the current project relies on `spring.jpa.hibernate.ddl-auto=update` for quick local runs. For production use, add Flyway/Liquibase migrations.
+- DB migrations: the project uses **Flyway** for database migrations with `spring.jpa.hibernate.ddl-auto=validate` to ensure schema integrity. Migration files are located in `src/main/resources/db/migration/`.
 
 8. Postman collection (quick guidance)
 
@@ -470,13 +470,309 @@ CREATE INDEX idx_audit_entity ON audit_logs(entity_type, entity_id);
 CREATE INDEX idx_audit_created_at ON audit_logs(created_at);
 ```
 
-## 13. Related Documents
+### 5.6. subscriptions table
+```sql
+CREATE TABLE subscriptions (
+    id BIGSERIAL PRIMARY KEY,
+    gateway_subscription_id VARCHAR(255) UNIQUE,
+    name VARCHAR(100) NOT NULL,
+    amount DECIMAL(10,2) NOT NULL,
+    interval_length INT NOT NULL,
+    interval_unit VARCHAR(20) NOT NULL,
+    start_date DATE NOT NULL,
+    status VARCHAR(30) NOT NULL DEFAULT 'active',
+    card_last4 VARCHAR(4),
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    cancelled_at TIMESTAMP
+);
+
+CREATE INDEX idx_subscription_gateway_id ON subscriptions(gateway_subscription_id);
+CREATE INDEX idx_subscription_status ON subscriptions(status);
+```
+
+### 5.7. webhook_events table
+```sql
+CREATE TABLE webhook_events (
+    id BIGSERIAL PRIMARY KEY,
+    notification_id VARCHAR(255) UNIQUE,
+    event_type VARCHAR(100) NOT NULL,
+    payload TEXT,
+    status VARCHAR(30) NOT NULL DEFAULT 'received',
+    processed_at TIMESTAMP,
+    error_message TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_webhook_notification_id ON webhook_events(notification_id);
+CREATE INDEX idx_webhook_event_type ON webhook_events(event_type);
+CREATE INDEX idx_webhook_created_at ON webhook_events(created_at);
+```
+
+## 14. Recurring Billing Flow
+
+```
+┌─────────┐     POST /payments/subscriptions      ┌──────────────────┐
+│ Client  │ ──────────────────────────────────────►│ SubscriptionCtrl │
+└─────────┘                                        └────────┬─────────┘
+                                                            │
+                                                   ┌────────▼──────────┐
+                                                   │SubscriptionService│
+                                                   └────────┬──────────┘
+                                                            │ ARBCreateSubscription
+                                                   ┌────────▼──────────┐
+                                                   │ AuthorizeNetClient│── Authorize.Net ARB API
+                                                   └────────┬──────────┘
+                                                            │
+                                                   ┌────────▼──────────┐
+                                                   │SubscriptionRepo   │── persist to DB
+                                                   └────────┬──────────┘
+                                                            │
+                                                   ┌────────▼──────────┐
+                                                   │ PaymentEventQueue │── async event
+                                                   └───────────────────┘
+```
+
+## 15. Webhook Processing Flow
+
+```
+┌──────────────┐  POST /webhooks/authorize-net  ┌─────────────────┐
+│ Authorize.Net│ ──────────────────────────────►│ WebhookController│
+└──────────────┘  (X-ANET-Signature header)     └────────┬────────┘
+                                                         │
+                                                ┌────────▼────────┐
+                                                │ WebhookService  │
+                                                │  1. Validate    │ ── SHA-512 HMAC
+                                                │     Signature   │
+                                                │  2. Deduplicate │ ── check notification_id
+                                                │  3. Persist     │ ── webhook_events table
+                                                │  4. Publish     │ ── PaymentEventQueue
+                                                └────────┬────────┘
+                                                         │ async
+                                                ┌────────▼────────┐
+                                                │PaymentEventQueue│ ── consumer thread
+                                                │  → Listeners    │ ── LoggingPaymentEventListener
+                                                └─────────────────┘
+```
+
+## 16. Design Trade-offs
+
+### Sync vs Async Processing
+- **Payment operations**: Synchronous. Client needs immediate response.
+- **Webhook handling**: Async via RabbitMQ durable queue. Fast 200 OK to Authorize.Net, then process via consumer.
+- **Audit logging**: Critical events (state transitions) sync; non-critical (gateway calls) async via @Async.
+
+### Retry Strategy
+- **@Retryable**: 3 attempts, exponential backoff (500ms → 1s → 2s) for `TransientPaymentException`.
+- **Circuit Breaker**: Opens after 50% failure rate in sliding window of 10 calls. Half-open after 30s.
+  - Config: `resilience4j.circuitbreaker.instances.authorizeNet.*` in `application.properties`
+  - Health indicator at `/actuator/health` shows circuit breaker state
+- **Rate Limiter**: Resilience4j `@RateLimiter` on all payment endpoints (100 req/s) and webhook endpoint (200 req/s).
+  - Config: `resilience4j.ratelimiter.instances.paymentApi.*` and `resilience4j.ratelimiter.instances.webhookApi.*`
+  - Returns HTTP 429 with `RATE_LIMIT_EXCEEDED` error code when exceeded
+- **Idempotency**: Prevents double-charging on client retries via `Idempotency-Key` header.
+- **Pending Transaction Retry**: Background `@Scheduled` job (`PendingTransactionRetryService`) scans for stale PENDING orders every 5 minutes. Retries up to 3 times, then marks as ERROR with audit trail.
+- **Error Transaction Retry**: Separate scheduled job retries ERROR-state orders that haven't exhausted max attempts (every 10 minutes).
+
+### Queue Architecture
+- **Current**: RabbitMQ-backed durable queues with in-memory `LinkedBlockingQueue` fallback.
+  - **Payment Events**: `payment-events-exchange` (topic) → `payment-events-queue` (durable)
+  - **Webhook Events**: `webhook-events-exchange` (topic) → `webhook-events-queue` (durable)
+  - **Dead Letter Queues**: `payment-events-dlq` and `webhook-events-dlq` for failed messages
+  - **Fallback**: If RabbitMQ is unavailable, events dispatched locally via in-memory queue
+- **Trade-off**: RabbitMQ provides event durability and multi-instance scaling; fallback ensures graceful degradation. Critical state is persisted to DB before queuing.
+
+### Secrets Management
+- **Development**: Environment variables / application.properties.
+- **Production**: HashiCorp Vault via `spring-cloud-starter-vault-config` — activate with `SPRING_PROFILES_ACTIVE=prod,vault`.
+  - **Vault Profile**: `application-vault.properties` configures Vault URI, Token/AppRole authentication, KV backend
+  - **Docker**: `docker-compose --profile vault up` starts Vault for local testing
+  - **API Key Rotation**: Configure TTL on Vault secrets; app re-fetches after expiry
+- **API Keys**: Never logged, masked in responses, stored only in Vault/env vars at runtime.
+
+### Observability Integration
+- **Custom Micrometer Metrics**: `MetricsConfig` registers payment event counters (`payment_events_total`), webhook counters (`webhook_events_total`), subscription counters (`subscription_events_total`), retry metrics (`payment_retry_attempts_total`, `payment_retry_success_total`, `payment_retry_exhausted_total`), and queue depth gauge (`payment_queue_size`) via the `PaymentEventListener` interface — zero coupling to business logic.
+- **Distributed Tracing**: `CorrelationIdFilter` injects `X-Correlation-ID` into MDC. OpenTelemetry bridge (`micrometer-tracing-bridge-otel`) exports traces to Jaeger via OTLP HTTP. `traceId`/`spanId` included in all structured log entries.
+- **JSON Structured Logging**: `logback-spring.xml` with `logstash-logback-encoder` for production; human-readable console for dev.
+- **Jaeger UI**: Accessible at `http://localhost:16686` when using docker-compose.
+- **Prometheus Endpoint**: `/actuator/prometheus` exposes all JVM, HTTP, circuit breaker, and custom payment metrics.
+
+## 20. High-Level Component Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                            PAYMENT PROCESSING SYSTEM                            │
+│                                                                                 │
+│  ┌──────────┐                                                                   │
+│  │  Client   │                                                                   │
+│  │(Browser/  │                                                                   │
+│  │  Mobile)  │                                                                   │
+│  └────┬─────┘                                                                   │
+│       │ HTTPS + JWT Bearer                                                      │
+│       ▼                                                                         │
+│  ┌──────────────────────────────────────────────┐                               │
+│  │            Spring Boot Application           │                               │
+│  │  ┌──────────┐ ┌───────────┐ ┌─────────────┐ │                               │
+│  │  │Controllers│ │ Security  │ │ Correlation │ │                               │
+│  │  │(REST API)│ │(JWT+Rate) │ │  ID Filter  │ │                               │
+│  │  └────┬─────┘ └───────────┘ └─────────────┘ │                               │
+│  │       │                                       │                               │
+│  │  ┌────▼─────┐ ┌───────────┐ ┌─────────────┐ │                               │
+│  │  │ Payment  │ │Subscription│ │  Webhook    │ │                               │
+│  │  │ Service  │ │  Service   │ │  Service    │ │                               │
+│  │  └────┬─────┘ └─────┬─────┘ └──────┬──────┘ │                               │
+│  │       │              │              │         │                               │
+│  │  ┌────▼──────────────▼──────────────▼───────┐ │                               │
+│  │  │        AuthorizeNetClient (SDK)          │ │                               │
+│  │  │   @Retryable + @CircuitBreaker           │ │                               │
+│  │  └────────────────┬─────────────────────────┘ │                               │
+│  └───────────────────┼───────────────────────────┘                               │
+│                      │                                                           │
+│       ┌──────────────┼──────────────┬─────────────────┬──────────────┐          │
+│       ▼              ▼              ▼                 ▼              ▼          │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐     ┌──────────┐  ┌──────────┐      │
+│  │PostgreSQL│  │ RabbitMQ │  │Authorize │     │  Jaeger  │  │  Vault   │      │
+│  │(Orders,  │  │(Durable  │  │  .Net    │     │(Tracing) │  │(Secrets) │      │
+│  │ Audit,   │  │ Queues,  │  │ Sandbox  │     │          │  │          │      │
+│  │ Webhooks)│  │  DLQ)    │  │  API     │     │          │  │          │      │
+│  └──────────┘  └──────────┘  └──────────┘     └──────────┘  └──────────┘      │
+│                                                                                 │
+│  ┌──────────────────────────────────────────────────────────────────────┐       │
+│  │                    Background Schedulers                              │       │
+│  │  • PendingTransactionRetryService (every 5 min)                      │       │
+│  │  • WebhookRetryService (every 2 min)                                 │       │
+│  │  • BillingCycleService (every 1 hour)                                │       │
+│  │  • SubscriptionScheduler (every 6 hours)                             │       │
+│  │  • IdempotencyService cleanup (hourly)                               │       │
+│  └──────────────────────────────────────────────────────────────────────┘       │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+## 21. Webhook Retry Flow
+
+```
+┌─────────────────────────────────┐
+│    WebhookRetryService          │
+│    @Scheduled(every 2 min)      │
+└──────────┬──────────────────────┘
+           │
+           ▼
+┌──────────────────────────────┐
+│ Query: webhook_events WHERE  │
+│ status='failed'              │
+│ AND retry_count < 3          │
+│ AND next_retry_at <= now     │
+└──────────┬───────────────────┘
+           │
+     ┌─────▼─────┐
+     │ For each   │
+     │ event      │
+     └──┬──────┬──┘
+        │      │
+        ▼      ▼ (on exception)
+   Reprocess   Increment retry_count
+   via queue   Set next_retry_at
+        │      (exponential backoff:
+        ▼       2^retry * 2 minutes)
+   Mark as        │
+   "processed"    ▼
+                ┌─────────────────┐
+                │ retry_count >= 3│
+                │ → stays "failed"│
+                │ → manual review │
+                └─────────────────┘
+```
+
+## 22. Billing Cycle Flow
+
+```
+┌─────────────────────────────────┐
+│    BillingCycleService          │
+│    @Scheduled(every 1 hour)     │
+└──────────┬──────────────────────┘
+           │
+           ▼
+┌──────────────────────────────┐
+│ Query: subscriptions WHERE   │
+│ status='active'              │
+│ AND next_billing_date <= now │
+└──────────┬───────────────────┘
+           │
+     ┌─────▼──────────────┐
+     │ billing_failures   │
+     │ >= 3?              │
+     └──┬────────────┬────┘
+        │ Yes        │ No
+        ▼            ▼
+   Suspend      Sync with gateway
+   subscription  (ARB status check)
+                    │
+              ┌─────▼──────┐
+              │ Gateway OK? │
+              └──┬──────┬──┘
+                 │ Yes  │ No
+                 ▼      ▼
+           Advance   Increment
+           cycle     failure count
+           (set next_billing_date)
+```
+
+## 18. Pending Transaction Retry Flow
+
+```
+┌─────────────────────────────────┐
+│   PendingTransactionRetryService │
+│   @Scheduled(every 5 min)       │
+└──────────┬──────────────────────┘
+           │
+           ▼
+┌─────────────────────────────┐
+│ Query: PENDING orders older  │
+│ than 2 minutes               │
+└──────────┬──────────────────┘
+           │
+     ┌─────▼─────┐
+     │ retryCount │
+     │ >= 3?      │
+     └─┬───────┬──┘
+       │ Yes   │ No
+       ▼       ▼
+  Mark ERROR  Increment retryCount
+  + Audit     + Check provider_tx_id
+              │
+        ┌─────▼─────┐
+        │ Has txId?  │
+        └─┬───────┬──┘
+          │ Yes   │ No
+          ▼       ▼
+     Query      Mark ERROR
+     gateway    (no card data
+     status     to retry with)
+```
+
+## 19. Metrics Architecture
+
+```
+PaymentService ──publish──▶ PaymentEventQueue ──dispatch──▶ MetricsConfig (listener)
+     │                           │                              │
+     │                           │                              ▼
+     │                           │                     Micrometer Registry
+     │                           │                              │
+     │                           ▼                              ▼
+     │                   LoggingPaymentEventListener    /actuator/prometheus
+     │                   (structured log output)
+     │
+     ▼
+  AuditService ──▶ audit_logs table (persistent record)
+```
+
+## 17. Related Documents
 
 - [COMPLIANCE.md](COMPLIANCE.md) - PCI DSS awareness and security guidance
-- [IMPROVEMENT_PLAN.md](IMPROVEMENT_PLAN.md) - Detailed improvement roadmap
+- [OBSERVABILITY.md](OBSERVABILITY.md) - Metrics, tracing, logging strategy
 - [TESTING_STRATEGY.md](TESTING_STRATEGY.md) - Test coverage strategy
 - [API-SPECIFICATION.yml](API-SPECIFICATION.yml) - OpenAPI specification
 
 ---
 
-Generated: 2026-02-20 (Updated)
+Generated: 2026-03-07 (Updated)

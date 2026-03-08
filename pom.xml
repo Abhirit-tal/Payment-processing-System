@@ -103,6 +103,17 @@
             <version>2.1.0</version>
         </dependency>
 
+        <!-- Spring Boot Actuator for health, metrics, and observability -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <!-- Micrometer Prometheus registry for metrics export -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
+
         <!-- Spring Retry for retry mechanisms -->
         <dependency>
             <groupId>org.springframework.retry</groupId>
@@ -120,13 +131,42 @@
             <version>2.1.0</version>
         </dependency>
 
-        <!-- Spring AMQP for async processing (optional - uncomment when RabbitMQ is configured) -->
-        <!--
+        <!-- Spring AMQP for async webhook/event processing via RabbitMQ -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-amqp</artifactId>
         </dependency>
-        -->
+
+        <!-- Flyway for database migrations (production-safe schema management) -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+
+        <!-- Micrometer Tracing + OpenTelemetry for distributed tracing -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-tracing-bridge-otel</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-exporter-otlp</artifactId>
+        </dependency>
+
+        <!-- Logstash Logback Encoder for JSON structured logging -->
+        <dependency>
+            <groupId>net.logstash.logback</groupId>
+            <artifactId>logstash-logback-encoder</artifactId>
+            <version>7.4</version>
+        </dependency>
+
+        <!-- Spring Cloud Vault for secrets management (optional, activated via 'vault' profile) -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-vault-config</artifactId>
+            <version>4.0.1</version>
+            <optional>true</optional>
+        </dependency>
 
         <!-- Test -->
         <dependency>

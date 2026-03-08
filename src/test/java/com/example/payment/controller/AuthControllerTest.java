@@ -8,6 +8,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import static org.mockito.Mockito.mock;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -26,6 +27,20 @@ public class AuthControllerTest {
     @Test
     public void testTokenUnauthorized() throws Exception {
         mockMvc.perform(post("/auth/token").contentType(MediaType.APPLICATION_JSON).content("{\"developer_key\":\"wrong\"}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    public void testTokenMissingKey() throws Exception {
+        mockMvc.perform(post("/auth/token").contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    public void testMeEndpointWithNoAuth() throws Exception {
+        // In standalone MockMvc without Spring Security, SecurityContextHolder returns null auth
+        // so /auth/me returns 401
+        mockMvc.perform(get("/auth/me"))
                 .andExpect(status().isUnauthorized());
     }
 }

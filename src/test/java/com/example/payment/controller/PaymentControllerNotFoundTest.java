@@ -1,6 +1,8 @@
 package com.example.payment.controller;
 
+import com.example.payment.service.IdempotencyService;
 import com.example.payment.service.PaymentService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
@@ -20,10 +22,11 @@ public class PaymentControllerNotFoundTest {
     @BeforeEach
     public void setup() {
         paymentService = mock(PaymentService.class);
+        IdempotencyService idempotencyService = mock(IdempotencyService.class);
         when(paymentService.capture("missing", null)).thenReturn(java.util.Optional.empty());
         when(paymentService.voidTransaction("missing")).thenReturn(java.util.Optional.empty());
         when(paymentService.refund("missing", null, null)).thenReturn(java.util.Optional.empty());
-        PaymentController controller = new PaymentController(paymentService);
+        PaymentController controller = new PaymentController(paymentService, idempotencyService, new ObjectMapper());
         this.mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
     }
 

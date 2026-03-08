@@ -1,6 +1,8 @@
 package com.example.payment.controller;
 
+import com.example.payment.service.IdempotencyService;
 import com.example.payment.service.PaymentService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
@@ -18,7 +20,8 @@ public class PaymentControllerValidationTest {
     @BeforeEach
     public void setup() {
         PaymentService paymentService = mock(PaymentService.class);
-        PaymentController controller = new PaymentController(paymentService);
+        IdempotencyService idempotencyService = mock(IdempotencyService.class);
+        PaymentController controller = new PaymentController(paymentService, idempotencyService, new ObjectMapper());
         this.mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
     }
 

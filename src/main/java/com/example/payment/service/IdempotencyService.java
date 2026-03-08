@@ -42,6 +42,7 @@ import java.util.Optional;
 public class IdempotencyService {
 
     private static final Logger log = LoggerFactory.getLogger(IdempotencyService.class);
+    private static final long STALE_LOCK_TIMEOUT_SECONDS = 300; // 5 minutes
 
     private final IdempotencyKeyRepository repository;
     private final ObjectMapper objectMapper;
@@ -86,6 +87,14 @@ public class IdempotencyService {
 
         // Check if request is still being processed
         if (idempotencyKey.isLocked() && !idempotencyKey.isCompleted()) {
+            // Detect stale lock: if locked for more than timeout, release it
+            if (idempotencyKey.getLockedAt() != null &&
+                    idempotencyKey.getLockedAt().plusSeconds(STALE_LOCK_TIMEOUT_SECONDS).isBefore(Instant.now())) {
+                log.warn("Idempotency key {} has stale lock (locked at {}), releasing for reprocessing",
+                        key, idempotencyKey.getLockedAt());
+                repository.delete(idempotencyKey);
+                return Optional.empty(); // Allow reprocessing
+            }
             log.info("Idempotency key {} is currently being processed", key);
             throw new IdempotencyConflictException(
                     "A request with this idempotency key is currently being processed");

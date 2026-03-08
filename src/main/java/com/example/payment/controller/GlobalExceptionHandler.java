@@ -3,6 +3,7 @@ package com.example.payment.controller;
 import com.example.payment.dto.PaymentErrorCode;
 import com.example.payment.dto.PaymentErrorResponse;
 import com.example.payment.exception.*;
+import io.github.resilience4j.ratelimiter.RequestNotPermitted;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -31,6 +32,7 @@ public class GlobalExceptionHandler {
 
     /**
      * Handle validation exceptions from @Valid annotations.
+     * Card-related field values are masked to prevent sensitive data leakage.
      */
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<PaymentErrorResponse> handleValidationExceptions(
@@ -40,6 +42,11 @@ public class GlobalExceptionHandler {
         ex.getBindingResult().getAllErrors().forEach(error -> {
             String fieldName = ((FieldError) error).getField();
             String errorMessage = error.getDefaultMessage();
+            // Mask any rejected value that may contain card data
+            Object rejectedValue = ((FieldError) error).getRejectedValue();
+            if (rejectedValue != null && isSensitiveField(fieldName)) {
+                errorMessage = maskSensitiveErrorMessage(errorMessage, rejectedValue);
+            }
             fieldErrors.put(fieldName, errorMessage);
         });
 
@@ -193,6 +200,23 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Handle rate limiter exceeded exceptions (HTTP 429 Too Many Requests).
+     */
+    @ExceptionHandler(RequestNotPermitted.class)
+    public ResponseEntity<PaymentErrorResponse> handleRateLimitExceeded(
+            RequestNotPermitted ex, WebRequest request) {
+
+        PaymentErrorResponse response = new PaymentErrorResponse(
+                PaymentErrorCode.RATE_LIMIT_EXCEEDED, "Too many requests. Please retry after a short delay.")
+                .withRequestId(getRequestId(request))
+                .withRetryAfter(1)
+                .withSuggestion("Reduce request frequency or implement backoff");
+
+        log.warn("Rate limit exceeded: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(response);
+    }
+
+    /**
      * Map error code string to PaymentErrorCode enum.
      */
     private PaymentErrorCode mapErrorCode(String errorCode) {
@@ -204,6 +228,31 @@ public class GlobalExceptionHandler {
         } catch (IllegalArgumentException e) {
             return PaymentErrorCode.INTERNAL_ERROR;
         }
+    }
+
+    /**
+     * Check if a field name relates to sensitive card data.
+     */
+    private boolean isSensitiveField(String fieldName) {
+        if (fieldName == null) return false;
+        String lower = fieldName.toLowerCase();
+        return lower.contains("card") || lower.contains("number")
+                || lower.contains("cvv") || lower.contains("pan")
+                || lower.contains("cvc") || lower.contains("cardcode");
+    }
+
+    /**
+     * Mask any sensitive card values that might appear in validation error messages.
+     */
+    private String maskSensitiveErrorMessage(String message, Object rejectedValue) {
+        if (rejectedValue == null || message == null) return message;
+        String valueStr = rejectedValue.toString();
+        // If the rejected value looks like a card number (long digits), mask it
+        if (valueStr.matches("\\d{8,19}")) {
+            return message;  // don't include the value at all
+        }
+        // Replace any embedded card-like numbers in the message itself
+        return message.replaceAll("\\b\\d{13,19}\\b", "****");
     }
 }
 

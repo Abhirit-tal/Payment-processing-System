@@ -41,6 +41,32 @@ public class PaymentRequests {
         public void setExpYear(int expYear) { this.expYear = expYear; }
         public String getCvv() { return cvv; }
         public void setCvv(String cvv) { this.cvv = cvv; }
+
+        /**
+         * Returns a masked representation to prevent card data leaking into logs,
+         * exception stack traces, or debug output.
+         */
+        @Override
+        public String toString() {
+            String maskedNumber = (number != null && number.length() >= 4)
+                    ? "****" + number.substring(number.length() - 4)
+                    : "****";
+            return "Card{number='" + maskedNumber + "', expMonth=" + expMonth
+                    + ", expYear=" + expYear + ", cvv='***'}";
+        }
+
+        /**
+         * Convert to a map suitable for gateway calls. The returned map must only be
+         * used transiently and never logged directly.
+         */
+        public java.util.Map<String, String> toGatewayMap() {
+            java.util.Map<String, String> card = new java.util.HashMap<>();
+            card.put("number", number);
+            card.put("expMonth", String.valueOf(expMonth));
+            card.put("expYear", String.valueOf(expYear));
+            card.put("cvv", cvv);
+            return card;
+        }
     }
 
     @Schema(description = "Purchase (authorize + capture) request")

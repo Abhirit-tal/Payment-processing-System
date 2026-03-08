@@ -1,5 +1,6 @@
 package com.example.payment.service;
 
+import com.example.payment.event.PaymentEventQueue;
 import com.example.payment.exception.InvalidStateTransitionException;
 import com.example.payment.model.Order;
 import com.example.payment.model.PaymentState;
@@ -29,6 +30,7 @@ public class PaymentServiceExtendedTest {
     private TransactionRepository transactionRepository;
     private PaymentStateMachine stateMachine;
     private AuditService auditService;
+    private PaymentEventQueue eventQueue;
     private PaymentService paymentService;
 
     @BeforeEach
@@ -38,7 +40,8 @@ public class PaymentServiceExtendedTest {
         transactionRepository = mock(TransactionRepository.class);
         stateMachine = mock(PaymentStateMachine.class);
         auditService = mock(AuditService.class);
-        paymentService = new PaymentService(authorizeNetClient, orderRepository, transactionRepository, stateMachine, auditService);
+        eventQueue = mock(PaymentEventQueue.class);
+        paymentService = new PaymentService(authorizeNetClient, orderRepository, transactionRepository, stateMachine, auditService, eventQueue);
 
         // Default mocks
         when(stateMachine.canTransition(any(), any())).thenReturn(true);

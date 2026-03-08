@@ -45,6 +45,9 @@ public enum PaymentErrorCode {
     // Idempotency Errors (409)
     IDEMPOTENCY_CONFLICT("IDEMPOTENCY_CONFLICT", "Request conflicts with a previous request", 409, false),
 
+    // Rate Limiting (429)
+    RATE_LIMIT_EXCEEDED("RATE_LIMIT_EXCEEDED", "Too many requests", 429, true),
+
     // Internal Errors (500)
     DATABASE_ERROR("DATABASE_ERROR", "Database error occurred", 500, true),
     INTERNAL_ERROR("INTERNAL_ERROR", "An internal error occurred", 500, false),

@@ -142,6 +142,86 @@ Log routing and aggregation:
 
 ## Implementation notes
 
+### ✅ What's Actually Integrated in Code
+
+| Feature | Status | Implementation |
+|---------|--------|----------------|
+| **Prometheus Metrics** | ✅ Implemented | `spring-boot-starter-actuator` + `micrometer-registry-prometheus` → `/actuator/prometheus` |
+| **Custom Payment Metrics** | ✅ Implemented | `MetricsConfig` registers `payment_events_total`, `webhook_events_total`, `subscription_events_total`, `payment_queue_size` via Micrometer counters/gauges |
+| **Retry Metrics** | ✅ Implemented | `PendingTransactionRetryService` exposes `payment_retry_attempts_total`, `payment_retry_success_total`, `payment_retry_exhausted_total` |
+| **Health Endpoint** | ✅ Implemented | `/actuator/health` shows app + circuit breaker + RabbitMQ health |
+| **Correlation ID (MDC)** | ✅ Implemented | `CorrelationIdFilter` reads/generates `X-Correlation-ID`, puts in MDC, adds to response |
+| **Distributed Tracing (OTel)** | ✅ Implemented | `micrometer-tracing-bridge-otel` + `opentelemetry-exporter-otlp` → Jaeger (OTLP HTTP on port 4318) |
+| **Jaeger Tracing UI** | ✅ Implemented | Jaeger `all-in-one` in docker-compose → `http://localhost:16686` |
+| **JSON Structured Logging** | ✅ Implemented | `logback-spring.xml` + `logstash-logback-encoder` for production profile; includes `traceId`, `spanId`, `correlationId` |
+| **Structured Log Pattern** | ✅ Implemented | Dev profile: `logging.pattern.console` with `%X{correlationId}` and `%X{traceId}`. Prod: JSON via Logstash encoder |
+| **Circuit Breaker Metrics** | ✅ Implemented | Resilience4j `authorizeNet` instance → health indicator + Prometheus metrics |
+| **Event Queue Metrics** | ✅ Implemented | `PaymentEventQueue.getQueueSize()` + Micrometer gauge `payment_queue_size` |
+| **RabbitMQ Queue Processing** | ✅ Implemented | `PaymentEventQueue` publishes to RabbitMQ durable queues with DLQ; `@RabbitListener` consumers dispatch events |
+| **Audit Logging** | ✅ Implemented | `AuditService` persists all state transitions, gateway calls, errors to `audit_logs` table |
+| **Pending Tx Retry** | ✅ Implemented | `PendingTransactionRetryService` — scheduled job retries stale PENDING/ERROR orders with audit trail and Micrometer metrics |
+| **Webhook Retry** | ✅ Implemented | `WebhookRetryService` — scheduled job retries failed webhook events with exponential backoff |
+| **Billing Cycle Scheduler** | ✅ Implemented | `BillingCycleService` — processes due billing cycles, tracks `next_billing_date`, failure counts |
+| **Subscription Sync** | ✅ Implemented | `SubscriptionScheduler` — syncs subscription statuses with Authorize.Net ARB every 6 hours |
+
+### Custom Micrometer Metrics (MetricsConfig + PendingTransactionRetryService)
+
+| Metric Name | Type | Tags | Description |
+|-------------|------|------|-------------|
+| `payment_events_total` | Counter | `type`: purchase_success, purchase_failed, authorize_success, capture_success, void_success, refund_success | Total payment events by type |
+| `webhook_events_total` | Counter | — | Total webhook events received from Authorize.Net |
+| `subscription_events_total` | Counter | `type`: created, cancelled | Total subscription lifecycle events |
+| `payment_queue_size` | Gauge | — | Current depth of the fallback in-memory payment event queue |
+| `payment_retry_attempts_total` | Counter | — | Total pending transaction retry attempts |
+| `payment_retry_success_total` | Counter | — | Total successful retries that reconciled with gateway |
+| `payment_retry_exhausted_total` | Counter | — | Total retries that exceeded max attempts |
+
+### Correlation ID Flow
+
+```
+Client Request                    Server Response
+┌─────────────┐                  ┌──────────────┐
+│ X-Correlation-ID: abc-123 │ →  │ X-Correlation-ID: abc-123 │
+│ (or auto-generated UUID)  │    │                            │
+└─────────────┘                  └──────────────┘
+         │
+         ▼
+┌─────────────────────────┐
+│ MDC: correlationId=abc-123  │
+│ MDC: requestId=req_abc-1234 │
+│                              │
+│ All log lines include:       │
+│ [abc-123] INFO ...message    │
+└─────────────────────────┘
+```
+
+### Log Format (Console)
+
+```
+2026-03-07 14:30:00.123 [main] [abc-12345-678] INFO  c.e.p.s.PaymentService - Created order 1 with amount 10.00 USD
+```
+
+### Prometheus Metrics Endpoint
+
+Exposed at `/actuator/prometheus`. Key metrics automatically collected:
+- `http_server_requests_seconds_*` — request latency by method, URI, status
+- `jvm_memory_*`, `jvm_gc_*` — JVM metrics
+- `resilience4j_circuitbreaker_*` — circuit breaker state, failure rate, calls
+- `spring_data_*` — database connection pool metrics
+- `payment_events_total` — payment event counters by type (purchase, auth, capture, void, refund)
+- `webhook_events_total` — webhook receipt counter
+- `subscription_events_total` — subscription lifecycle counters
+- `payment_queue_size` — current event queue depth
+
+### Configuration
+
+```properties
+# application.properties
+management.endpoints.web.exposure.include=health,info,prometheus,metrics
+management.endpoint.health.show-details=when-authorized
+management.metrics.tags.application=Payment Processing System
+```
+
 - Java: use `micrometer-core` + `micrometer-registry-prometheus`, `opentelemetry-javaagent` or manual OpenTelemetry SDK instrumentation. Use `logback` with `logstash-logback-encoder` for JSON logs.
 - Expose `/actuator/health` and `/actuator/prometheus` (if using Spring Boot) on an internal port or behind the metrics collector.
 - Secure metrics and trace endpoints using network-level controls and/or basic auth when necessary.
