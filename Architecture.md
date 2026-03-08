@@ -775,4 +775,4 @@ PaymentService ──publish──▶ PaymentEventQueue ──dispatch──▶ 
 
 ---
 
-Generated: 2026-03-07 (Updated)
+Generated: 2026-03-09 (Updated)
